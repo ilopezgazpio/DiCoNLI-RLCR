@@ -1,0 +1,23 @@
+# Paths are relative to the process working directory. No downloads occur on import.
+source:
+  repository: https://github.com/ilopezgazpio/SemEval-2027-Task-2-DiCo-NLI
+  revision: 588968e610197ddc4c440314701cbc587afc4c1b
+output_dir: data/dico-nli/prepared/en
+seed: 42
+splits:
+  train:
+    labeled: true
+    participant:
+      path: data/dico-nli/raw/588968e610197ddc4c440314701cbc587afc4c1b/train/dico_nli_train_track1_participant_labeled.csv
+      sha256: 5e8dd9f3a7e000933fec3c9e64d064f9a25586f141f58d6e6afb47c4fc797211
+    reference:
+      path: data/dico-nli/raw/588968e610197ddc4c440314701cbc587afc4c1b/train/dico_nli_train_track1_reference.csv
+      sha256: c8f4d8587711e0beaefc115606e5c29c3e78dc6660e074967428af0fed069ee4
+  dev:
+    labeled: true
+    participant:
+      path: data/dico-nli/raw/588968e610197ddc4c440314701cbc587afc4c1b/dev/dico_nli_dev_track1_participant_labeled.csv
+      sha256: 80b7152f7ccf0d349d42ad2f098988106689b918b36337e5756b121d17513511
+    reference:
+      path: data/dico-nli/raw/588968e610197ddc4c440314701cbc587afc4c1b/dev/dico_nli_dev_track1_reference.csv
+      sha256: 8d5cd11c1c60df3c9b59254d12a60fb2cf43e91dde01b46c8a8f296b806134bc

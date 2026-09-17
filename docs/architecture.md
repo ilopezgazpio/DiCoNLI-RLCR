@@ -1,17 +1,18 @@
 # Architecture
 
 This repository retains one modular application, under `src/main/python/rlcr`.
-The dataset-specific benchmark layer has been removed. DiCo-NLI integration is
-planned in [short-term.md](short-term.md), not yet implemented.
+The old benchmark layer has been removed. DiCo-NLI data integration is implemented;
+the remaining steps are tracked in [short-term.md](short-term.md).
 
 ## Responsibilities
 
 | Package | Responsibility |
 |---|---|
-| `cli.py`, `__main__.py` | One CLI: train, evaluate (raw generation), infer |
+| `cli.py`, `__main__.py` | One CLI: train, evaluate (raw generation), infer, prepare-data |
 | `arguments/` | One configuration dataclass per file |
 | `configuration/` | Resolved run-settings snapshots |
 | `data/validation.py` | Prepared prompt/label validation, no task transformations |
+| `data/dico_nli/` | CSV records, input labels, reference joins, pair/split validation, sampling, audit/storage |
 | `text/prediction.py` | Strict exact-label and scalar-confidence parsing |
 | `models/` | Policy, reference, tokenizer, inference, quantization, device memory |
 | `rewards/` | Exact accuracy, scalar Brier, format, registry |
@@ -75,8 +76,13 @@ symbolic verification, answer-repair generations, or external judge calls.
 
 `evaluate` renders each prepared prompt, generates raw completions, and saves
 columns plus counts. Generic Brier/ECE helpers are available but not an official
-DiCo-NLI scorer. The task adapter must add official-label checks, source/pair
-validation, submission export, and pinned official scoring.
+DiCo-NLI scorer. Input-label and source/pair validation are implemented in the
+data adapter; output-label checks, submission export, and official scoring remain pending.
+
+The data adapter saves canonical records without prompts. Its immutable record
+keeps texts, labels, source IDs, and reference availability explicit. Future prompt
+construction must whitelist model inputs, not stringify metadata. See [data.md](data.md)
+for the module contract, sampling decisions, and audit results.
 
 ## Launching and storage
 
@@ -91,7 +97,7 @@ local batch times worker count. The local batch is
 `steps_per_generation` defaulting to accumulation steps.
 The global batch must be divisible by `num_generations`.
 
-Data, recipes, and outputs stay separate; new task recipes are not bundled yet.
+Data, recipes, and outputs stay separate; the data recipe is bundled, model recipes are not.
 Resolved snapshots describe application arguments, not launcher flags/hardware.
 Input metadata is preserved, and batch reruns reject changed input rows.
 Model-label caching is not content-addressed: change the output directory or

@@ -8,10 +8,11 @@ benchmark datasets, recipes, prompts, answer verifiers, judge/classifier workflo
 and example suites have been removed. Previous local data and model/output
 artifacts were moved to a recovery directory outside the checkout.
 
-**Current status:** this is a cleaned foundation, not a complete DiCo-NLI system.
-Prepared-prompt training, raw batch generation, and ad-hoc inference work.
-DiCo-NLI CSV ingestion, label-set validation, official scoring/submission export,
-WordNet evidence, and pair-aware GRPO are next; none is implemented yet.
+**Current status:** DiCo-NLI data integration is implemented, not the complete system.
+Local CSV import, input-label/pair validation, source-group sampling, and provenance
+audits work. Prepared-prompt training, raw generation, and inference remain available.
+NLI prompt/output-label integration, official scoring/submission export, WordNet,
+and pair-aware GRPO are still pending.
 See [short term](docs/short-term.md), [medium term](docs/medium-term.md), and
 [long term](docs/long-term.md) for the research plan and results log.
 
@@ -53,16 +54,18 @@ python -m rlcr --help
 python -m rlcr train --help
 python -m rlcr evaluate --help
 python -m rlcr infer --help
+python -m rlcr prepare-data --help
 ```
 
 The installed `rlcr` command aliases the same CLI. Accelerate/Slurm launches this
 application; each training worker calls `GRPOTrainer.train()`.
-The old dataset-specific `prepare-data` command is removed.
+`prepare-data` now imports DiCo-NLI through a data YAML; old `--recipe` presets do not exist.
 
 ```text
 src/main/python/rlcr/  # Modular application and reusable GRPO infrastructure
 configs/accelerate/   # Retained distributed launcher configuration
-data/                 # Future prepared DiCo-NLI datasets
+configs/data/         # Pinned, data-only DiCo-NLI import recipe
+data/dico-nli/        # Ignored raw downloads and prepared task records
 outputs/train/        # Runtime model/adapter checkpoints
 outputs/eval/         # Runtime raw predictions and generation counts
 docs/                 # Architecture, configuration, and research roadmap
@@ -70,7 +73,7 @@ scripts/slurm/        # Single-node launcher template
 tests/                # Offline synthetic CPU regression fixtures
 ```
 
-There are no bundled training/evaluation recipes or prepared task datasets yet.
+There are no bundled DiCo-NLI training/evaluation recipes yet.
 Future task recipes can live in `configs/train/` and `configs/eval/`.
 Paths in YAML are relative to the process working directory, not the YAML file.
 Data and configs are external inputs, not packaged resources.
@@ -80,6 +83,24 @@ directory. It is distinct from an experiment YAML. Adapter directories contain
 `adapter_config.json` and still need their referenced base weights.
 
 See [architecture](docs/architecture.md) and [configuration](docs/configuration.md).
+
+## Import DiCo-NLI data
+
+After obtaining the pinned English files described in the [data guide](docs/data.md):
+
+```bash
+python -m rlcr prepare-data --config configs/data/dico-nli-en.yaml
+```
+
+This creates a validated DatasetDict with `train`/`dev` splits plus an audit and
+checksum manifest. The current working checkout already has this prepared output;
+reruns require a new `--output-dir`. Existing destinations are never overwritten.
+The importer does not download files or load a model.
+
+These are **task records, not model-ready prompts**. Prompt construction is a
+separate upcoming step. The English audit passed ID/pair checks but flagged four
+text-pair overlaps under distinct train/dev source IDs; see the data guide before
+interpreting experimental results.
 
 ## Prepared-data contract
 

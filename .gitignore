@@ -1,6 +1,9 @@
 # Byte-compiled / optimized / DLL files
 # Generated models, checkpoints, predictions, and per-run configuration snapshots.
 /outputs/
+# Downloaded task inputs and generated Arrow datasets; recipes pin their hashes.
+/data/dico-nli/raw/
+/data/dico-nli/prepared/
 __pycache__/
 *.py[cod]
 *$py.class

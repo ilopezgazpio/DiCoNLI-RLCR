@@ -48,6 +48,11 @@ def build_parser():
     infer.add_argument("--max-tokens", type=int, default=4096)
     infer.add_argument("--hf-batch-size", type=int, default=1)
     infer.add_argument("--seed", type=int, default=42)
+    prepare = commands.add_parser(
+        "prepare-data", help="Validate and import local DiCo-NLI CSV files (no model or prompt)"
+    )
+    prepare.add_argument("--config", required=True, help="Data preparation YAML path")
+    prepare.add_argument("--output-dir", help="Override the new prepared dataset directory")
     return parser
 
 
@@ -83,6 +88,14 @@ def main(argv=None):
         except ValueError as error:
             parser.error(str(error))
         run_evaluation(*parsed)
+    elif args.command == "prepare-data":
+        from .data.dico_nli.preparation import prepare_dico_data
+
+        try:
+            audit = prepare_dico_data(args.config, output_dir=args.output_dir)
+        except (ValueError, OSError) as error:
+            parser.error(str(error))
+        print(json.dumps(audit, indent=2))
     else:
         from .inference.runner import run_inference
 

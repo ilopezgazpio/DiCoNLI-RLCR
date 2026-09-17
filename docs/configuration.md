@@ -1,9 +1,17 @@
 # Configuration and run storage
 
 `configs/` holds human-authored configuration, `data/` input datasets, and
-`outputs/` generated artifacts. Only `configs/accelerate/zero2.yaml` is currently
-bundled; task-specific training/evaluation recipes will accompany the DiCo-NLI
-adapter. Do not use old benchmark recipes against the cleaned workflow.
+`outputs/` generated model/prediction artifacts. `configs/accelerate/zero2.yaml`
+and `configs/data/dico-nli-en.yaml` are bundled; DiCo-NLI training/evaluation recipes
+are pending. Do not use old benchmark recipes against the cleaned workflow.
+
+## Data preparation
+
+`python -m rlcr prepare-data --config configs/data/dico-nli-en.yaml` imports local
+official CSVs into canonical task records, with strict validation, source-group
+sampling, hashes, and audit reports. Its data-only YAML is independent of model
+settings. See [data.md](data.md) for all fields, acquisition steps, and limitations.
+The output has no prompt column yet; it is not directly training-ready.
 
 ## Training
 
@@ -153,7 +161,7 @@ These are intentional breaking changes, not silently ignored settings:
 | Evaluation `check_fn`, `check_fn_args`, `correctness_fn`, `pass_k_vals` | Legacy answer scoring removed; official task scoring pending |
 | Evaluation `tasks`, `class_model`, `split_at_confidence` | Raw generation only |
 | Dataset `hash_key` | Preserve unique `id_column` identifiers |
-| `prepare-data --recipe ...` | Dataset-specific recipe command removed; task adapter pending |
+| `prepare-data --recipe ...` | Use the DiCo-NLI data-only `prepare-data --config ...` command |
 | Training `callbacks`, `system_prompt` | Python callback objects still work; system messages belong in prepared prompts |
 | `completion_logging_steps`, `eval_log_keys` | Standard logging cadence, no configurable completion columns |
 | `set_pad_token` | Tokenizer pad token, falling back to EOS |
