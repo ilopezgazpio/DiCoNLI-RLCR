@@ -120,7 +120,7 @@ python -m rlcr prepare-data --recipe trivia --output data/trivia-prepared --seed
 
 Available recipes are `hotpotqa`, `big-math-digits`, `gpqa`, and `trivia`. This command downloads source datasets and saves a new local dataset directory; it never uploads to the Hub or overwrites an existing output. Randomized preparation is seeded. Use the published datasets above when reproducing the exact paper datasets.
 
-Training accepts a Hub dataset ID or a directory saved with `datasets.save_to_disk`, with the configured splits (defaults: `train`/`test`). Examples need a `question` or `problem` column; correctness/calibration rewards also need `answer` and compatible task-specific metadata. In particular, the training accuracy reward selects Hotpot exact matching using `source: hotpot`; otherwise it uses math verification. Arbitrary CSV/JSON schemas are not automatically adapted or fully validated in advance.
+Training accepts a Hub dataset ID or a local Hugging Face `DatasetDict` saved with `.save_to_disk()`, with the configured splits (defaults: `train`/`test`). Examples need a `question` or `problem` column; correctness/calibration rewards also need `answer` and compatible task-specific metadata. In particular, the training accuracy reward selects Hotpot exact matching using `source: hotpot`; otherwise it uses math verification. Arbitrary CSV/JSON schemas are not automatically adapted or fully validated in advance.
 
 ## Training
 
@@ -190,74 +190,115 @@ The template is single-node; multi-node launch/rendezvous settings need separate
 
 Additional research presets are in [scripts/train_examples.sh](scripts/train_examples.sh); review their resources, output paths, and publication settings before running. [Original research WandB logs](https://wandb.ai/mehuldamani/RLCR?nw=nwusermehuldamani) are historical results, not validation of this refactor.
 
----
+## Inference
 
-## 📊 Evaluation
-
-To run inference with our trained RLCR model on a single GPU:
+After the quickstart training run, generate from its local adapter on one GPU:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python -m rlcr infer \
-  --model mehuldamani/hotpot-v2-brier-7b-no-split \
+  --model outputs/train/quickstart-qlora \
   --load-in-4bit --system-prompt tabc_long \
+  --max-tokens 512 \
   --prompt "Which popular dessert was invented at the Hungry Monk in Alfriston, Sussex?"
 ```
 
-The example loads the model in 4-bit using the same `.venv` environment. Repeat `--prompt` for multiple questions. Inference prints one JSON record per question, containing its generated completions.
+The loader recognizes a local adapter through `adapter_config.json` and loads its base plus adapters; no merge step is required. `--model` also accepts a full-model directory or Hub model ID, such as `mehuldamani/hotpot-v2-brier-7b-no-split`. The 10-step smoke run tests the workflow, not model quality.
 
-### 📚 Available Models
+Repeat `--prompt` for multiple questions. Inference prints one JSON record per question, containing its generated completions. `--n`, `--temperature`, `--max-tokens`, and `--hf-batch-size` control generation; inference's default prompt is `tabc_long`.
+
+### Published models
 
 | Name              | Training Dataset                                         | Model Path                                             | System Prompt   |
 |:------------------|:------------------------------|:--------------------------------------------------------------|:-------------|
-| RLCR-hotpot       | HotpotQA-Modified                          | mehuldamani/hotpot-v2-brier-7b-no-split |   TABC_Long     |
-| RLVR-hotpot       | HotpotQA-Modified (RLVR)        | mehuldamani/hotpot-v2-correctness-7b    |    GEN   |
-| Classifier-hotpot | HotpotQA-Modified (Classifier)  | mehuldamani/orm-hotpot-v2-final-correctness  |    Gen             |
-| RLCR-math         | Big-Math-Digits                            | mehuldamani/big-math-digits-v2-brier-base-tabc |       TABC          |
-| SFT-RLCR-math     | Big-Math-Digits (SFT Warmup)                    | mehuldamani/big-math-digits-v2-brier |       TABC          |
-| RLVR-math         | Big-Math-Digits (RLVR)          | mehuldamani/big-math-digits-v2-correctness    |      Gen           |
-| Classifier-math   | Big-Math-Digits (Classifier) | mehuldamani/orm-big-math-digits-v2-correctness  |      Gen           |
+| RLCR-hotpot       | HotpotQA-Modified                          | mehuldamani/hotpot-v2-brier-7b-no-split | `tabc_long` |
+| RLVR-hotpot       | HotpotQA-Modified (RLVR)        | mehuldamani/hotpot-v2-correctness-7b    | `gen` |
+| Classifier-hotpot | HotpotQA-Modified (Classifier)  | mehuldamani/orm-hotpot-v2-final-correctness  | Classifier stage |
+| RLCR-math         | Big-Math-Digits                            | mehuldamani/big-math-digits-v2-brier-base-tabc | `tabc` |
+| SFT-RLCR-math     | Big-Math-Digits (SFT Warmup)                    | mehuldamani/big-math-digits-v2-brier | `tabc` |
+| RLVR-math         | Big-Math-Digits (RLVR)          | mehuldamani/big-math-digits-v2-correctness    | `gen` |
+| Classifier-math   | Big-Math-Digits (Classifier) | mehuldamani/orm-big-math-digits-v2-correctness  | Classifier stage |
 
-### 🧪 Sample Evaluation Run
+Prompt names are lowercase and case-sensitive. Classifiers are loaded through evaluation's `gen_then_classify` task and `class_model` setting, not the generative `infer` command.
 
-Run evaluation on a dataset using a config:
+## Evaluation
+
+Evaluate the quickstart adapter on 32 Hotpot examples:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python -m rlcr evaluate \
+  --config configs/eval/hotpot-peft-smoke.yaml \
+  --model outputs/train/quickstart-qlora \
+  --output-dir outputs/eval/quickstart-hotpot \
+  --sample-size 32
+```
+
+Evaluation recipes are named YAML mappings, not the old positional JSON lists. For example:
+
+```yaml
+dataset:
+  name: mehuldamani/hotpot_qa  # Hub ID or local saved dataset directory
+  split: test
+  hash_key: problem
+  sample_size: 32
+models:
+  - name: my-adapter          # Unique label for prediction columns and metrics
+    model: outputs/train/quickstart-qlora
+    sys_prompt_name: tabc_long
+    check_fn: confidence_verifier
+    tasks: [confidence_at_end, ans_at_end]
+    load_in_4bit: true
+    max_tokens: 512
+output_dir: outputs/eval/my-adapter-hotpot
+fresh: false
+```
+
+`--dataset`, `--split`, `--sample-size`, and `--output-dir` override the recipe. `--model` is supported only for a single-model recipe. Unknown YAML keys are rejected. See [the configuration guide](docs/configuration.md#evaluation-recipes) for all dataset options and migration details.
+
+### Scoring and memory
+
+Evaluation uses Transformers for generation, classification, and LLM judging. `hf_batch_size` defaults to 1; generation defaults are `temperature: 0` and `max_tokens: 4096`, with shorter limits in local-adapter recipes. `tasks` selects postprocessing such as `ans_at_end`, `confidence_at_end`, or `confidence_prob`. The last option collects selected-token probabilities, not full vocabulary scores for every step.
+
+`check_fn: confidence_verifier` tries math verification, then normalized exact matching as a fallback; it is used for Hotpot and math datasets. `llm_confidence_verifier` scores answers with a separate judge. Supplied trivia, SimpleQA, CommonsenseQA, and GPQA recipes use the latter. Their default judge is `meta-llama/Llama-3.1-8B-Instruct`; ensure you have access and enough memory for it, or configure an accessible alternative through `judge_model` inside the `check_fn_args` mapping.
+
+`load_in_4bit: true` quantizes the **generator**, including local adapters. To also quantize the judge, set `check_fn_args: {judge_load_in_4bit: true}`. The generator is released before loading the judge. Classifier postprocessing has its own loader and does not inherit the generator's 4-bit flag.
+
+### Outputs and reuse
+
+Each run's `output_dir` contains `predictions/` (a saved Arrow dataset), `metrics.json`, and `resolved-config.yaml`.
+
+- Results are reused by model `name`, not by a fingerprint of weights or settings. For a changed model or scoring protocol, use a new output directory or `--fresh` to regenerate against the same input rows.
+- Changed dataset rows, order, split, or sample count require a **new output directory** when they no longer match saved predictions. `--fresh` does not bypass the input-row compatibility check.
+- `--no-fresh` disables the global fresh flag; a model-level `fresh: true` still forces regeneration. The supplied local-adapter recipes set global `fresh: true`.
+- Predictions and metrics are saved after the entire configured model list finishes, not after every model. An interrupted multi-model run can lose new results from that invocation.
+
+### Paper evaluation suites
+
+To evaluate the paper's Hotpot model group on TriviaQA:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python -m rlcr evaluate --config configs/eval/hotpot-models-trivia.yaml
 ```
 
-For a full eval suite on a single GPU (We already provide the outputs/results from this):
+To launch all 16 paper-group/dataset evaluations sequentially on GPU 0:
 
 ```bash
 bash scripts/evaluate_examples.sh
 ```
 
-### 📝 Notes
+These commands launch real model/data downloads and evaluation, not a report viewer. The paper presets include multiple models, classifiers, and sometimes an LLM judge; they are not small-GPU smoke tests and do not enable 4-bit loading by default. Some datasets use local `data/` paths; obtain those inputs before launching the suite.
 
-- Each evaluation's `output_dir` contains `predictions/`, `metrics.json`, and `resolved-config.yaml`.
-- To evaluate new datasets/models, edit or add YAML recipes inside `configs/eval/`.
-- Override run locations and sample counts with `--output-dir /scratch/eval-run --sample-size 32`. Input locations can be overridden with `--dataset /datasets/example` and, for single-model recipes, `--model /models/adapter`.
-- Existing predictions are reused by model `name` unless `fresh: true` or `--fresh` is selected. When changing a model or its generation/scoring settings, use a new output directory or regenerate with `--fresh`. `--no-fresh` disables the global fresh flag; individual model-level `fresh` flags still apply.
-- Paper-model recipes preserve their separate `*-fresh-*` output destinations. Migrated historical results are under the corresponding names without `-fresh`; they are not automatically reused by those recipes.
-- Default evaluation uses `temperature = 0` and `max_tokens = 4096`.
-- Evaluation uses Transformers for generation, classification, and LLM judging. `hf_batch_size` controls the inference batch size and defaults to 1. `load_in_4bit` enables quantized generation, including local adapter checkpoints.
-- Evaluation configs select post-processing through `tasks` (for example, `ans_at_end`, `confidence_at_end`, or `confidence_prob`). Token probabilities are collected only for `confidence_prob`, retaining only the selected token's score for each step.
-- For LLM judging on a small GPU, set `"check_fn_args": {"judge_load_in_4bit": true}`. The generator is released before loading the judge.
-- Currently supported evaluation functions:
-  - **Exact Match** (Used for hotpotqa)
-  - **Math Verify** (Used for all math datasets)
-  - **LLM-as-a-Judge** (Used for trivia, simpleqa, commonsenseqa, gpqa)
-
----
+Paper-model recipes retain `outputs/eval/*-models-fresh-*` destinations. Migrated historical runs, when present, use names without `-fresh` and are not automatically reused. Historical artifacts were preserved during cleanup; they are not evidence that the refactored code has reproduced all paper results.
 
 ## Tests
 
 With `.venv` activated:
 
 ```bash
-HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 python -m pytest -q tests
+CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=1 HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
+  python -m pytest -q tests
 ```
 
-The tests construct tiny Qwen models locally and run on CPU. They cover config parsing, generation, full-model and adapter training and reloading, evaluation post-processing, judge integration, and the application CLI. GPU quantization and multi-GPU DeepSpeed require separate hardware checks.
+The tests construct tiny Qwen models locally and run on CPU without model downloads. They cover strict configuration parsing and removed options, loader kwargs, generation, full-model and adapter training/reloading, evaluation storage and postprocessing, judge integration, and the CLI. The normal suite skips the opt-in distributed cases.
 
 The two-worker CPU regression is opt-in because it needs local inter-process networking:
 
@@ -269,17 +310,22 @@ CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=1 HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1
 
 It checks groups split across workers, synchronized full-model/LoRA updates, and frozen adapter-base weights. It validates CPU DDP, not GPU DeepSpeed or 4-bit execution.
 
----
+### Validation limits
 
-## 📄 Citation
+CPU regressions do not validate actual GPU QLoRA kernels, multi-GPU DeepSpeed, or a complete paper-scale experiment. GPU quantization, ZeRO-3/FSDP, multi-node Slurm, and container deployment require separate hardware/deployment checks. There is no automated CI workflow yet. The checkpoint-overwrite, evaluation-cache, and end-of-run persistence limitations described above remain current behavior, not completed fixes.
+
+Research caveat: successful execution does not guarantee calibration. Monitor answer accuracy and confidence distributions; a policy can collapse to a narrow range of confidence values.
+
+## Citation
 
 If you find this work useful, please cite:
 
 ```bibtex
-@article{damani2025beyond,
+@inproceedings{damani2026beyond,
   title={Beyond Binary Rewards: Training LMs to Reason About Their Uncertainty},
   author={Damani, Mehul and Puri, Isha and Slocum, Stewart and Shenfeld, Idan and Choshen, Leshem and Kim, Yoon and Andreas, Jacob},
-  journal={arXiv preprint arXiv:2507.16806},
-  year={2025}
+  booktitle={International Conference on Learning Representations},
+  year={2026},
+  url={https://arxiv.org/abs/2507.16806}
 }
 ```
