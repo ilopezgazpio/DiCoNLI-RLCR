@@ -20,7 +20,7 @@ class GRPOConfig(TrainingArguments):
             "help": "Extra model-loading kwargs, e.g. local_files_only or cache_dir. Dedicated model settings cannot be duplicated here."
         },
     )
-    # Reward functions need the ground-truth answer and source columns.
+    # Reward functions need labels and any additional example metadata.
     remove_unused_columns: bool = field(default=False)
     num_iterations: int = field(default=1)
     reward_weights: Optional[list[float]] = field(default=None)
@@ -160,7 +160,7 @@ class GRPOConfig(TrainingArguments):
             "help": "Whether to scale the rewards by dividing them by their standard deviation. If `True` (default), "
             "the rewards are normalized by the standard deviation, ensuring they have unit variance. If `False`, no "
             "scaling is applied. The Dr. GRPO paper recommends not scaling the rewards, as scaling by the standard "
-            "deviation introduces a question-level difficulty bias."
+            "deviation introduces a prompt-level difficulty bias."
         },
     )
 

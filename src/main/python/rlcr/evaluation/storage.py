@@ -2,7 +2,6 @@
 import json
 from pathlib import Path
 from datasets import DatasetDict, load_dataset, load_from_disk
-from rlcr.data.hashing import hash_dataset
 
 
 def load_evaluation_dataset(args):
@@ -12,7 +11,13 @@ def load_evaluation_dataset(args):
         dataset = load_dataset(args.dataset_name, name=args.dataset_config)
     if isinstance(dataset, DatasetDict):
         dataset = dataset[args.split]
-    dataset = dataset.map(lambda row: hash_dataset(row, args.hash_key))
+    if args.id_column not in dataset.column_names:
+        raise ValueError(f"Prepared evaluation data needs an {args.id_column} column.")
+    identifiers = list(dataset[args.id_column])
+    if any(not isinstance(value, str) or not value.strip() for value in identifiers):
+        raise ValueError("Evaluation identifiers must be nonempty strings.")
+    if len(set(identifiers)) != len(identifiers):
+        raise ValueError("Evaluation identifiers must be unique.")
     if args.sample_size is not None:
         dataset = dataset.select(range(args.sample_size))
     return dataset

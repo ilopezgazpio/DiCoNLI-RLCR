@@ -4,7 +4,7 @@ from typing import Optional, Sized
 
 
 class RepeatSampler(Sampler):
-    """Repeat questions in contiguous GRPO groups using a shared sampling seed."""
+    """Repeat prompts in contiguous GRPO groups using a shared sampling seed."""
 
     def __init__(
         self,

@@ -31,7 +31,7 @@ def cli(*args, cwd):
     return result
 
 
-@pytest.mark.parametrize("command", [[], ["train"], ["evaluate"], ["infer"], ["prepare-data"]])
+@pytest.mark.parametrize("command", [[], ["train"], ["evaluate"], ["infer"]])
 def test_cli_help_outside_checkout(command, tmp_path):
     assert "usage:" in cli(*command, "--help", cwd=tmp_path).stdout
 
@@ -57,7 +57,7 @@ def test_cli_training_runs_and_honors_overrides(tiny_model, tmp_path, peft):
     DatasetDict(
         {
             "train": Dataset.from_dict(
-                {"question": ["question", "long question"], "answer": ["yes", "no"]}
+                {"prompt": ["question", "long question"], "label": ["yes", "no"]}
             )
         }
     ).save_to_disk(dataset_dir)
@@ -74,9 +74,6 @@ def test_cli_training_runs_and_honors_overrides(tiny_model, tmp_path, peft):
                 "use_peft": peft,
                 "lora_r": 2,
                 "lora_target_modules": ["q_proj", "v_proj"],
-                "task_spec": "gen",
-                "sys_prompt_name": "gen",
-                "format_pattern": "tabc",
                 "reward_funcs": ["format"],
                 "beta": 0,
                 "per_device_train_batch_size": 1,
@@ -130,7 +127,7 @@ def test_cli_inference_returns_grouped_json(tiny_model, tmp_path):
         "--prompt",
         "long question",
         "--system-prompt",
-        "gen",
+        "Return a structured prediction.",
         "--torch-dtype",
         "float32",
         "--max-tokens",
@@ -153,7 +150,11 @@ def test_cli_evaluation_loads_local_dataset(tiny_model, tmp_path):
     tokenizer.save_pretrained(base)
     dataset_dir = tmp_path / "dataset"
     DatasetDict(
-        {"test": Dataset.from_dict({"question": ["question"], "answer": ["yes"]})}
+        {
+            "test": Dataset.from_dict(
+                {"instance_id": ["sample-1"], "prompt": ["question"], "label": ["yes"]}
+            )
+        }
     ).save_to_disk(dataset_dir)
     output = tmp_path / "results"
     config = tmp_path / "evaluation.yaml"
@@ -162,7 +163,7 @@ def test_cli_evaluation_loads_local_dataset(tiny_model, tmp_path):
             {
                 "dataset": {
                     "name": "unused-dataset",
-                    "hash_key": "question",
+                    "id_column": "instance_id",
                 },
                 "output_dir": str(tmp_path / "unused"),
                 "models": [
@@ -171,7 +172,6 @@ def test_cli_evaluation_loads_local_dataset(tiny_model, tmp_path):
                         "model": "unused-model",
                         "torch_dtype": "float32",
                         "max_tokens": 3,
-                        "sys_prompt_name": "gen",
                     }
                 ],
             }
@@ -194,7 +194,9 @@ def test_cli_evaluation_loads_local_dataset(tiny_model, tmp_path):
     saved = load_from_disk(output / "predictions")
     assert len(saved) == 1
     assert "test-output_0" in saved.column_names
-    assert json.loads((output / "metrics.json").read_text()) == {}
+    assert json.loads((output / "metrics.json").read_text()) == {
+        "test": {"examples": 1, "completions": 1}
+    }
     resolved = yaml.safe_load((output / "resolved-config.yaml").read_text())
     assert resolved["output_dir"] == str(output)
     assert resolved["dataset"]["name"] == str(dataset_dir)

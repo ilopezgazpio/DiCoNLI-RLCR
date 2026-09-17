@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compute per-question advantages from rewards gathered across workers."""
+"""Compute per-prompt advantages from rewards gathered across workers."""
 
 
 def grouped_advantages(rewards_per_func, weights, args, process_index, local_count):

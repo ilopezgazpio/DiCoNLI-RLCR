@@ -36,7 +36,11 @@ def generate_and_score(
 ):
     mode = "train" if model.training else "eval"
     prompts = [example["prompt"] for example in examples]
-    texts = [maybe_apply_chat_template(example, tokenizer)["prompt"] for example in examples]
+    # TRL reserves `label` for other dataset formats. Only the prompt belongs
+    # in its chat formatter; labels and pair metadata are reward inputs.
+    texts = [
+        maybe_apply_chat_template({"prompt": prompt}, tokenizer)["prompt"] for prompt in prompts
+    ]
     encoded = prepare_inputs(
         tokenizer(
             texts,

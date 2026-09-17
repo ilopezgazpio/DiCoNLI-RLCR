@@ -8,7 +8,7 @@
 
 # Single-node template: adjust partition/account/time/GPU requests for your site.
 # Submit from the repository root:
-# sbatch scripts/slurm/train.sbatch configs/train/hotpot-qwen7b-rlcr-full.yaml
+# sbatch scripts/slurm/train.sbatch /path/to/training.yaml
 set -euo pipefail
 
 if [[ $# -lt 1 ]]; then

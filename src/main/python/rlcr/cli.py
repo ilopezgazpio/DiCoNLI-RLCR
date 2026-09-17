@@ -3,7 +3,6 @@ import argparse
 import json
 
 from . import __version__
-from .data.recipes import RECIPES
 
 
 def build_parser():
@@ -16,10 +15,12 @@ def build_parser():
         "train",
         help="Run full-model, LoRA, or QLoRA GRPO training",
         description="Run a training YAML. Extra arguments override its Transformers/GRPO/model settings.",
-        epilog="Example: rlcr train --config configs/train/hotpot-qwen1.5b-rlcr-qlora-smoke.yaml --max_steps 10",
+        epilog="Example: rlcr train --config /path/to/experiment.yaml --max_steps 10",
     )
     train.add_argument("--config", required=True, help="Training YAML path")
-    evaluate = commands.add_parser("evaluate", help="Run an evaluation YAML")
+    evaluate = commands.add_parser(
+        "evaluate", help="Generate batch predictions (task scoring is not implemented yet)"
+    )
     evaluate.add_argument("--config", required=True, help="Evaluation YAML path")
     evaluate.add_argument("--output-dir", help="Override the local evaluation run directory")
     evaluate.add_argument("--dataset", help="Override the Hub dataset ID or local directory")
@@ -32,14 +33,12 @@ def build_parser():
         default=None,
         help="Regenerate selected models, or --no-fresh to reuse existing predictions",
     )
-    infer = commands.add_parser("infer", help="Generate answers for one or more prompts")
+    infer = commands.add_parser("infer", help="Generate completions for one or more prompts")
     infer.add_argument("--model", required=True, help="Model ID or local model/adapter directory")
     infer.add_argument(
-        "--prompt", action="append", required=True, help="Question; repeat for multiple questions"
+        "--prompt", action="append", required=True, help="Input text; repeat for multiple inputs"
     )
-    infer.add_argument(
-        "--system-prompt", default="tabc_long", help="Named system prompt, e.g. tabc_long or gen"
-    )
+    infer.add_argument("--system-prompt", help="Optional literal system message, not a preset name")
     infer.add_argument(
         "--torch-dtype", choices=["auto", "float32", "float16", "bfloat16"], default="bfloat16"
     )
@@ -49,12 +48,6 @@ def build_parser():
     infer.add_argument("--max-tokens", type=int, default=4096)
     infer.add_argument("--hf-batch-size", type=int, default=1)
     infer.add_argument("--seed", type=int, default=42)
-    prepare = commands.add_parser("prepare-data", help="Build a dataset recipe and save it locally")
-    prepare.add_argument("--recipe", choices=sorted(RECIPES), required=True)
-    prepare.add_argument(
-        "--output", required=True, help="New dataset directory; existing paths are not overwritten"
-    )
-    prepare.add_argument("--seed", type=int, default=42)
     return parser
 
 
@@ -90,10 +83,6 @@ def main(argv=None):
         except ValueError as error:
             parser.error(str(error))
         run_evaluation(*parsed)
-    elif args.command == "prepare-data":
-        from .data.preparation import prepare_dataset
-
-        prepare_dataset(args.recipe, args.output, args.seed)
     else:
         from .inference.runner import run_inference
 

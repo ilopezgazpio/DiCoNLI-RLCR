@@ -12,9 +12,9 @@ class GlobalArgs:
     split: str = field(
         default="test", metadata={"help": "Dataset split to use (e.g., train, test, validation)"}
     )
-    hash_key: str = field(
-        default="prompt",
-        metadata={"help": "Column key to generate a unique hash ID for each example"},
+    id_column: str = field(
+        default="instance_id",
+        metadata={"help": "Column containing stable, unique example identifiers"},
     )
     sample_size: Optional[int] = field(
         default=None, metadata={"help": "Number of samples to use for evaluation"}

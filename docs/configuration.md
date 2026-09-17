@@ -1,79 +1,80 @@
 # Configuration and run storage
 
-There are three distinct responsibilities:
+`configs/` holds human-authored configuration, `data/` input datasets, and
+`outputs/` generated artifacts. Only `configs/accelerate/zero2.yaml` is currently
+bundled; task-specific training/evaluation recipes will accompany the DiCo-NLI
+adapter. Do not use old benchmark recipes against the cleaned workflow.
 
-- `configs/`: human-authored YAML recipes.
-- `data/`: input datasets saved with Hugging Face Datasets.
-- `outputs/`: generated models, checkpoints, predictions, metrics, and run settings.
+## Training
 
-## Training recipes
-
-`configs/train/` contains complete experiments, not the model's architecture JSON.
-Filenames describe the dataset, model, objective, and training method. For example:
+Training uses flat YAML with Transformers-style underscore CLI overrides:
 
 ```bash
-python -m rlcr train \
-  --config configs/train/hotpot-qwen3b-rlcr-qlora.yaml \
-  --dataset_name /datasets/hotpot \
-  --output_dir /scratch/my-training-run \
-  --max_steps 10
+python -m rlcr train --config /path/to/training.yaml \
+  --dataset_name /datasets/prepared --output_dir /scratch/new-run --max_steps 10
 ```
 
-Training keeps its flat YAML format and Transformers-style underscore CLI overrides.
-Unknown YAML keys and unsupported options now raise an error instead of being
-silently ignored. Full fine-tuning, LoRA, and QLoRA still use the same training workflow.
-All 11 historical recipes are retained; `1000steps`/`2000steps` in new filenames
-describe optimizer steps, not dataset size. The `sft-rlcr` recipe starts GRPO from
-an SFT checkpoint; it does not run a separate SFT stage.
+A minimal **illustrative** single-GPU QLoRA configuration follows. Paths are
+placeholders; it is not a validated DiCo-NLI preset:
 
-The final model or adapter is saved directly in `output_dir`, alongside its
-tokenizer, `config.json`/`adapter_config.json`, and trainer state. Intermediate
-`checkpoint-*` directories are created when checkpointing is enabled. Do not
-move these metadata files away from their weights or merge them with recipes.
+```yaml
+model_name_or_path: /models/base-instruct
+dataset_name: /datasets/prepared
+dataset_train_split: train
+output_dir: outputs/train/new-run
+use_peft: true
+load_in_4bit: true
+load_in_8bit: false
+lora_target_modules: [q_proj, v_proj]
+torch_dtype: bfloat16
+bf16: true
+attn_implementation: sdpa
+gradient_checkpointing: true
+gradient_checkpointing_kwargs: {use_reentrant: false}
+reward_funcs: [accuracy, brier]
+reward_weights: [1.0, 0.5]
+beta: 0.0
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 2
+num_generations: 2
+max_prompt_length: 512
+max_completion_length: 64
+max_steps: 10
+eval_strategy: "no"
+save_strategy: "no"
+report_to: []
+push_to_hub: false
+```
 
-Existing run names are preserved under `outputs/train/`. To avoid replacing a
-previous run's final weights, supply a new `--output_dir`. The existing training
-behavior of automatically resuming the last checkpoint, when present, is retained.
+Use compatible LoRA target modules for your selected architecture.
+Full-weight training sets both `use_peft` and quantized loading to false;
+unquantized LoRA keeps `use_peft: true` but disables quantized loading.
 
-`configs/accelerate/zero2.yaml` describes distributed execution. Its gradient
-accumulation and clipping values are `auto`: the experiment owns
-`gradient_accumulation_steps` and `max_grad_norm`. The launcher still controls
-process counts and the ZeRO strategy.
+Prepared training data needs a `prompt` column (text or chat messages), plus
+`label` (nonempty string) when using accuracy/Brier. Labels remain reward
+metadata; the caller supplies the complete task instructions in the prompt.
+Optional split names default to `train`/`test`; evaluation splits are required
+only when the training evaluation strategy is enabled.
+Subset sizes select the first rows; no task-aware pair sampling exists yet.
 
-### Supported options and removed leftovers
+Supported rewards are `accuracy`, `format`, and `brier`.
+All parse `<answer>LABEL</answer><confidence>NUMBER</confidence>`, with finite
+confidence in [0, 1]. Invalid structure gets -1 from each reward.
+Accuracy gives 1/0 for exact label correctness; Brier gives
+`1 - (confidence - correctness)^2`; format gives 1 for valid structure.
+No official label vocabulary is enforced yet. Default selected rewards are
+accuracy and Brier; absent explicit weights, the trainer averages them.
+The roadmap's experiment weights therefore require explicit `reward_weights`.
+This is a foundation, not the planned knowledge/pair-aware reward.
 
-The training parser derives accepted keys from the application dataclasses. It
-preserves CLI precedence and TRL's optional `env` mapping, but does not load implicit
-`*.args` files. The inert `num_processes` key was removed from all training recipes;
-set worker counts in Accelerate instead.
+Unknown YAML keys and unused CLI overrides fail. The parser derives keys from
+application dataclasses, preserves override precedence and an optional `env`
+mapping, and does not load implicit `*.args` files.
+Process counts belong to Accelerate, not the training YAML.
 
-These previously accepted but inactive options have been removed:
+### Model loading
 
-| Removed option | Supported behavior |
-|---|---|
-| Training `callbacks` | Python callers can still pass callback objects directly to `GRPOTrainer(callbacks=...)`. |
-| Training `system_prompt` | Select a named prompt with `sys_prompt_name`. Inference's `--system-prompt` remains supported. |
-| `completion_logging_steps` | Completion tables use the regular Trainer logging cadence (`logging_steps`/`logging_strategy`). |
-| `eval_log_keys` | The current evaluation logger has no configurable column selection. |
-| `set_pad_token` | Preserve the tokenizer's pad token, or fall back to its EOS token when absent. |
-| `gradient_checkpointing_use_reentrant` | Use `gradient_checkpointing_kwargs: {use_reentrant: false}`. |
-| `ignore_bias_buffers` | No application implementation; the inherited no-op setting was removed. |
-| `orm_key` | No ORM training workflow is exposed. |
-| Evaluation `correctness_fn` | Select the evaluator with `check_fn`. |
-
-Both training and evaluation support only `task_spec: gen`. Unsupported SFT/ORM
-task values now fail explicitly. Their disconnected preprocessing helpers were
-removed; using an existing SFT checkpoint as the initial GRPO policy still works.
-
-The default `sys_prompt_name` is now the valid `gen` prompt. All supplied recipes
-retain their explicit prompt choices. Supported rewards are `accuracy`, `format`,
-`brier`, `mean_confidence`, and `confidence_one_or_zero`; unknown names fail before
-dataset/model loading. LoRA settings and reference synchronization options remain
-supported, including those consumed inside TRL rather than the local code.
-
-### Extra model-loading settings
-
-Additional Transformers loader kwargs are preserved instead of overwritten:
+Additional loader kwargs are preserved:
 
 ```yaml
 model_init_kwargs:
@@ -81,128 +82,106 @@ model_init_kwargs:
   cache_dir: /scratch/huggingface
 ```
 
-Dedicated model settings have a single owner. Do not duplicate `revision`,
-`torch_dtype`, `trust_remote_code`, `attn_implementation`, `load_in_4bit`, or
-`load_in_8bit` inside `model_init_kwargs`; use their top-level fields instead
-(`model_revision` for the revision). `use_cache`, `quantization_config`, and
-`device_map` are managed by the training workflow and are also rejected as extras.
+Dedicated settings have one owner. Do not duplicate revision, dtype, remote-code
+trust, attention, or quantization inside these extras; use top-level fields
+(`model_revision` for revision). `use_cache`, `device_map`, and
+`quantization_config` are managed internally and rejected as extras.
+Shared Hub-loading options are forwarded to the tokenizer. Credentials are
+rejected in serialized kwargs: use `HF_TOKEN` or Hub login.
+`local_files_only` here governs model/tokenizer loading, not datasets.
 
-The training tokenizer receives the same revision and shared Hub-loading options
-as the model, including cache/offline settings. Model-only arguments are not sent
-to the tokenizer. Credentials (`token`/`use_auth_token`) are rejected in these
-serialized extras; use `HF_TOKEN` or Hub login instead. `local_files_only` applies
-to model/tokenizer loading, not dataset downloads.
+## Batch generation
 
-## Evaluation recipes
-
-Evaluation now uses a YAML mapping rather than a positional JSON list:
+`evaluate` temporarily means raw generation, not official task scoring:
 
 ```yaml
 dataset:
-  name: mehuldamani/hotpot_qa  # Or a local dataset directory
+  name: /datasets/prepared
   split: test
-  hash_key: problem
+  id_column: instance_id
   sample_size: 32
-
 models:
-  - name: my-adapter          # Unique label used in result columns and metrics
-    model: outputs/train/RLCR-hotpot-qwen-3b-peft
-    sys_prompt_name: tabc_long
-    check_fn: confidence_verifier
-    tasks: [confidence_at_end, ans_at_end]
+  - name: candidate
+    model: /models/base-or-local-adapter
+    tokenize_key: prompt
     load_in_4bit: true
-    max_tokens: 512
-
-output_dir: outputs/eval/my-adapter-hotpot
+    torch_dtype: bfloat16
+    n: 1
+    temperature: 0
+    max_tokens: 64
+    hf_batch_size: 1
+    seed: 42
+output_dir: outputs/eval/new-run
 fresh: false
 ```
 
-Dataset options are `name`, optional Hub subset `config`, `split`, `hash_key`,
-and `sample_size`. Model entries retain the previous generation, postprocessing,
-and scoring options. Multiple models can still be evaluated against the same
-dataset. Names must be unique. Unknown configuration keys are rejected.
+Input can be a local saved Dataset/DatasetDict or Hub dataset. It must already
+have prepared prompts and unique nonempty string identifiers. Duplicate IDs are
+rejected, even outside a requested subset. Labels are not required for generation.
 
-```bash
-python -m rlcr evaluate \
-  --config configs/eval/hotpot-peft-3b-smoke.yaml \
-  --dataset /datasets/hotpot \
-  --model /scratch/my-training-run \
-  --output-dir /scratch/my-evaluation-run \
-  --sample-size 16
-```
+Dataset keys: `name`, optional `config`, `split`, `id_column`, `sample_size`.
+Model keys: `name`, `model`, `tokenize_key`, `n`, `temperature`,
+`max_tokens`, `seed`, `fresh`, `load_in_4bit`, `torch_dtype`, `hf_batch_size`.
+Model names must be unique. Defaults include n=1, temperature=0, max_tokens=4096,
+batch size=1. Keep a short explicit limit for small-card experiments.
 
-The optional `--model` override only applies to a single-model recipe. Other
-overrides are `--split`, `--fresh`, and `--no-fresh`. The last one disables the
-global fresh flag; a model's own `fresh: true` still forces that model to regenerate.
+CLI overrides use hyphens: `--dataset`, `--split`, `--sample-size`,
+`--output-dir`, `--model` (single-model config only), `--fresh`/`--no-fresh`.
+Disabling global fresh does not override a model's own `fresh: true`.
 
-Each output directory contains:
+Outputs:
 
 ```text
-my-evaluation-run/
-├── predictions/          # Saved Arrow dataset: answers and per-example scores
-├── metrics.json          # Aggregate metrics, keyed by model label
-└── resolved-config.yaml  # Defaults and CLI overrides included
+predictions/          # Saved Arrow dataset, original columns + NAME-output_N
+metrics.json          # Per-model examples/completions counts, NOT task scores
+resolved-config.yaml  # Defaults and overrides resolved
 ```
 
-`store_name` and `log_path` no longer exist. Evaluation outputs are always local
-paths, never Hub dataset identifiers. The predictions keep their existing saved
-dataset format and may contain columns for several models.
+Raw malformed completions remain raw; no repair generation or confidence
+replacement occurs. Generic Brier/ECE helpers are not called as official scoring.
+The task adapter/scorer will be a separate, explicit addition.
 
-Existing predictions are reused by model label unless fresh generation is
-requested. Use a **new output directory** when changing the dataset, split,
-sample count, model, or evaluation protocol. Alternatively, `--fresh` regenerates
-selected models against the same input rows. A different input row set/order is
-rejected to prevent combining unrelated predictions. Skipped models retain their
-previous metrics. Cached model labels are not a content-addressed model cache:
-changing a model under the same label requires a new directory or `--fresh`.
+## Removed options
 
-## Paths, snapshots, and deployment
+These are intentional breaking changes, not silently ignored settings:
 
-Relative paths retain their previous meaning: relative to the process working
-directory, **not** the recipe's directory. Run supplied examples from the checkout
-root. For Slurm or containers, use explicit absolute paths for mounted datasets,
-models, recipes, and writable output directories. No repository-specific storage
-root or additional environment configuration file is required.
-
-Training uses `--output_dir`/`--dataset_name`; evaluation uses
-`--output-dir`/`--dataset`. This preserves the training parser's existing interface.
-The Slurm script forwards training overrides unchanged.
-
-New invocations save resolved settings in `resolved-config.yaml`. When settings
-change within the same output directory, the previous snapshot is preserved under
-`config-history/`; an identical snapshot is not duplicated. Training credentials
-are excluded. Training snapshots describe application settings, not a complete
-record of launcher flags or hardware; retain the job submission script as well.
-Historical runs moved during cleanup have no reconstructed configuration snapshot.
-
-`outputs/` is ignored by Git. Back up valuable runs independently; configuration
-files in `configs/` remain version-control inputs.
-
-## Migration
-
-| Previous location | Current location |
+| Removed | Current boundary |
 |---|---|
-| `configs/Qwen-*/<dataset>/*.yaml` | `configs/train/<descriptive-experiment>.yaml` |
-| `eval_configs/Hotpot-models/<dataset>.json` | `configs/eval/hotpot-models-<dataset>.yaml` |
-| `eval_configs/Math-models/<dataset>.json` | `configs/eval/math-models-<dataset>.yaml` |
-| `eval_configs/PEFT/<name>.json` | `configs/eval/<name>.yaml` |
-| `data/RLCR-*` | `outputs/train/RLCR-*` |
-| `eval_outputs/Hotpot-models/<dataset>/` | `outputs/eval/hotpot-models-<dataset>/predictions/` |
-| `results/Hotpot-models/<dataset>/metrics.json` | `outputs/eval/hotpot-models-<dataset>/metrics.json` |
-| `eval_outputs/Math-models/<dataset>/` | `outputs/eval/math-models-<dataset>/predictions/` |
-| `results/Math-models/<dataset>/metrics.json` | `outputs/eval/math-models-<dataset>/metrics.json` |
-| `eval_outputs/PEFT/<name>/` | `outputs/eval/<name>/predictions/` |
-| `results/PEFT/<name>/metrics.json` | `outputs/eval/<name>/metrics.json` |
+| Training/evaluation `sys_prompt_name`, `task_spec` | Supply prepared prompts; no implicit task preprocessing |
+| Training `format_pattern` | One strict exact-label/confidence response contract |
+| `mean_confidence`, `confidence_one_or_zero` rewards | No direct incentive to report high/extreme confidence |
+| Evaluation `check_fn`, `check_fn_args`, `correctness_fn`, `pass_k_vals` | Legacy answer scoring removed; official task scoring pending |
+| Evaluation `tasks`, `class_model`, `split_at_confidence` | Raw generation only |
+| Dataset `hash_key` | Preserve unique `id_column` identifiers |
+| `prepare-data --recipe ...` | Dataset-specific recipe command removed; task adapter pending |
+| Training `callbacks`, `system_prompt` | Python callback objects still work; system messages belong in prepared prompts |
+| `completion_logging_steps`, `eval_log_keys` | Standard logging cadence, no configurable completion columns |
+| `set_pad_token` | Tokenizer pad token, falling back to EOS |
+| `gradient_checkpointing_use_reentrant` | `gradient_checkpointing_kwargs: {use_reentrant: false}` |
+| `ignore_bias_buffers`, `orm_key` | No implementation exposed |
+| Training `num_processes` | Launcher setting |
 
-The paper-model recipes already targeted `Hotpot-models-fresh` and
-`Math-models-fresh`, while bundled historical artifacts lived under names without
-`-fresh`. This distinction is preserved: current recipes target
-`outputs/eval/hotpot-models-fresh-<dataset>` and
-`outputs/eval/math-models-fresh-<dataset>`. No historical run is implicitly relabeled
-as a new evaluation.
+Ad-hoc inference's `--system-prompt` remains available, now as **literal text**.
+There is no SFT/ORM training command. Starting GRPO from a previously trained
+checkpoint remains possible.
 
-The `RLCR-hotpot-qwen-7b-peft-g8-1k` training directory was empty before migration
-and remains empty; its evaluation recipe needs a completed training run first.
-All existing weights, dataset files, saved predictions, and metrics were moved
-without modifying their contents. Empty legacy configuration/output folders were
-removed after the move. No model or dataset was deleted.
+## Storage and deployment cautions
+
+Relative paths resolve against the current working directory, not the YAML file.
+For Slurm/containers use explicit mounted paths or set the working directory.
+Configs/data are not embedded in the package wheel.
+
+Training saves final weights/adapters, tokenizer, state, and model card directly
+in `output_dir`; periodic `checkpoint-*` directories need checkpointing enabled.
+Existing checkpoints auto-resume; without one, reusing a directory can replace
+final weights. Prefer new run directories.
+
+Batch generation reuses output columns by model name. Changing the model/settings
+under the same name needs `--fresh` or a new directory. Changed input data/order
+is rejected. Counts for skipped models are preserved. Results are saved only
+after all models finish.
+
+Resolved settings are snapshotted; changed snapshots go into `config-history/`.
+They do not record the launcher/hardware automatically. Keep job logs and back up
+outputs separately. Previous benchmark artifacts were archived outside this
+checkout; their historical settings were not reconstructed.

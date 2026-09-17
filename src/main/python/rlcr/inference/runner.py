@@ -2,22 +2,18 @@
 from rlcr.models.inference import load_hf_generator
 from rlcr.models.memory import clear_device_cache
 from rlcr.models.tokenizer import load_tokenizer
-from rlcr.text.prompts import get_sys_prompt
 from .generator import hf_generate
+from .prompts import render_prompt
 
 
-def run_inference(config, prompts, system_prompt_name):
+def run_inference(config, prompts, system_prompt=None):
     tokenizer = load_tokenizer(config.model)
-    system_prompt = get_sys_prompt(system_prompt_name)
     conversations = [
-        [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"\n\nPROBLEM: {prompt}\n\n"},
-        ]
+        ([{"role": "system", "content": system_prompt}] if system_prompt else [])
+        + [{"role": "user", "content": prompt}]
         for prompt in prompts
     ]
-    ids = tokenizer.apply_chat_template(conversations, add_generation_prompt=True)
-    texts = [tokenizer.decode(tokens) for tokens in ids]
+    texts = [render_prompt(tokenizer, conversation) for conversation in conversations]
     model = load_hf_generator(config)
     try:
         return hf_generate(

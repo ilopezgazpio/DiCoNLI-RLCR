@@ -15,8 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.fixture
 def evaluation_config():
     return {
-        "dataset": {"name": "data/example", "hash_key": "question"},
-        "models": [{"name": "base", "model": "org/model", "sys_prompt_name": "gen"}],
+        "dataset": {"name": "data/example", "id_column": "instance_id"},
+        "models": [{"name": "base", "model": "org/model"}],
         "output_dir": "outputs/eval/example",
     }
 
@@ -53,14 +53,21 @@ def test_evaluation_yaml_roundtrip_and_overrides(tmp_path, evaluation_config):
         (None, "models", [], "nonempty list"),
         (None, "models", ["invalid"], "mapping"),
         ("dataset", "typo", 1, "Unknown dataset"),
+        ("dataset", "hash_key", "prompt", "Unknown dataset"),
         ("dataset", "name", "", "dataset_name"),
         ("dataset", "sample_size", 0, "positive integer"),
         ("dataset", "sample_size", True, "positive integer"),
         ("model", "name", "", "nonempty name"),
         ("model", "typo", 1, "Invalid evaluation model"),
         ("model", "correctness_fn", "unused", "Invalid evaluation model"),
-        ("model", "task_spec", "orm", "Only task_spec: gen"),
-        ("model", "sys_prompt_name", "ver", "Invalid system prompt"),
+        ("model", "check_fn", "unused", "Invalid evaluation model"),
+        ("model", "check_fn_args", {}, "Invalid evaluation model"),
+        ("model", "tasks", [], "Invalid evaluation model"),
+        ("model", "class_model", "unused", "Invalid evaluation model"),
+        ("model", "pass_k_vals", [1], "Invalid evaluation model"),
+        ("model", "split_at_confidence", True, "Invalid evaluation model"),
+        ("model", "task_spec", "orm", "Invalid evaluation model"),
+        ("model", "sys_prompt_name", "ver", "Invalid evaluation model"),
     ],
 )
 def test_invalid_evaluation_settings(tmp_path, evaluation_config, section, key, value, message):
@@ -139,9 +146,34 @@ def test_zero2_optimization_settings_come_from_training_arguments(accumulation):
 
 
 def test_configuration_layout():
-    assert list((ROOT / "configs/train").glob("*.yaml"))
-    assert list((ROOT / "configs/eval").glob("*.yaml"))
+    assert (ROOT / "configs/accelerate/zero2.yaml").is_file()
     assert not (ROOT / "eval_configs").exists()
     assert not (ROOT / "eval_outputs").exists()
     assert not (ROOT / "results").exists()
+
+
+def test_documented_training_example_parses(tmp_path):
+    import re
+    from rlcr.training.configuration import load_training_config
+
+    examples = re.findall(r"```yaml\n(.*?)```", (ROOT / "docs/configuration.md").read_text(), re.S)
+    path = tmp_path / "training.yaml"
+    path.write_text(examples[0])
+    script, training, model = load_training_config(
+        path, ["--use_cpu", "true", "--bf16", "false", "--output_dir", str(tmp_path / "output")]
+    )
+    assert script.reward_funcs == ["accuracy", "brier"]
+    assert model.use_peft and model.load_in_4bit
+    assert training.generation_batch_size % training.num_generations == 0
+
+
+def test_documented_generation_example_parses(tmp_path):
+    import re
+
+    examples = re.findall(r"```yaml\n(.*?)```", (ROOT / "docs/configuration.md").read_text(), re.S)
+    path = tmp_path / "generation.yaml"
+    path.write_text(examples[-1])
+    args, models = load_evaluation_config(path)
+    assert args.id_column == "instance_id"
+    assert models[0].tokenize_key == "prompt"
     assert not list((ROOT / "data").glob("RLCR-*"))

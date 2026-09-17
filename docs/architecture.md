@@ -1,173 +1,112 @@
-# Application structure
+# Architecture
 
-All application Python code is an installable `rlcr` package under
-`src/main/python`. There are no root-level Python launch scripts.
+This repository retains one modular application, under `src/main/python/rlcr`.
+The dataset-specific benchmark layer has been removed. DiCo-NLI integration is
+planned in [short-term.md](short-term.md), not yet implemented.
 
-```text
-src/main/python/rlcr/
-├── __main__.py          # python -m rlcr -> the shared CLI
-├── cli.py               # train / evaluate / infer / prepare-data dispatch
-├── arguments/           # one configuration dataclass per file
-├── configuration/       # shared resolved-configuration snapshots
-├── data/                # conversation transforms, dataset IDs, creation recipes
-├── text/                # system prompts and answer normalization
-├── models/              # policy/reference/inference loading and quantization
-├── rewards/             # format, accuracy, Brier, confidence, and registry
-├── training/
-│   ├── runner.py        # experiment orchestration and checkpoint lifecycle
-│   ├── configuration.py # strict YAML keys and CLI overrides
-│   ├── datasets.py      # training dataset splits and subsets
-│   └── grpo/
-│       ├── trainer.py          # Transformers integration, not a new train loop
-│       ├── dataloader.py       # expanded generation batches
-│       ├── repeat_sampler.py  # repeated questions for GRPO groups
-│       ├── rollout_buffer.py  # reuse across accumulation steps/iterations
-│       ├── rollout.py         # local policy generation and scoring
-│       ├── reward_evaluator.py # callable/model rewards and reward gather
-│       ├── advantages.py      # per-group reward baseline/normalization
-│       ├── log_probs.py       # bounded-size policy forward passes
-│       ├── loss.py            # clipped objective and optional KL
-│       └── training_metrics.py # metric aggregation and completion logging
-├── evaluation/
-│   ├── runner.py        # stage orchestration
-│   ├── configuration.py # named YAML sections, validation, and CLI overrides
-│   ├── storage.py      # input/result datasets and incremental output columns
-│   ├── generation.py   # inference plus postprocessing stages
-│   ├── postprocessing/ # answers, confidence, and classifier scores
-│   └── verifiers/      # symbolic checking, LLM judging, shared reports
-└── inference/           # generation, selected-token scores, and response types
-```
+## Responsibilities
 
-Use functions for stateless transformations and numerical operations. Stateful
-objects (the trainer, reward evaluator, rollout buffer, and metrics collector)
-have separate files. There is no mixin hierarchy or generic service framework.
+| Package | Responsibility |
+|---|---|
+| `cli.py`, `__main__.py` | One CLI: train, evaluate (raw generation), infer |
+| `arguments/` | One configuration dataclass per file |
+| `configuration/` | Resolved run-settings snapshots |
+| `data/validation.py` | Prepared prompt/label validation, no task transformations |
+| `text/prediction.py` | Strict exact-label and scalar-confidence parsing |
+| `models/` | Policy, reference, tokenizer, inference, quantization, device memory |
+| `rewards/` | Exact accuracy, scalar Brier, format, registry |
+| `training/` | Config parsing, split loading, lifecycle, logging, model cards |
+| `training/grpo/` | Sampling, rollouts, advantages, loss, metrics |
+| `inference/` | Prepared-prompt rendering, generation, optional token log-probabilities |
+| `evaluation/` | Batch-generation configs, raw outputs, local persistence; generic calibration helpers |
 
-## One entry point, different launchers
+Stateless operations are functions. Stateful components have separate files;
+there is no service framework or mixin hierarchy.
 
-`rlcr ...` and `python -m rlcr ...` invoke the same `cli.main` function. The
-console command is only a packaging alias, not a second implementation.
-
-Training proceeds as follows:
+## Model loading and the training loop
 
 ```text
-shell / container / Slurm
-    -> optional Accelerate or torchrun launcher
-        -> python -m rlcr train --config EXPERIMENT.yaml [overrides]
-            -> training.runner.run_training
-                -> GRPOTrainer.train() inherited from Transformers
-                    -> buffered rollout -> reward gather -> advantages
-                    -> GRPO loss -> distributed backward/optimizer update
+CLI -> strict training configuration -> training/runner.py
+    -> training/datasets.py: load and validate prepared inputs
+    -> training/grpo/trainer.py: initialize GRPOTrainer
+        -> models/training_kwargs.py: resolve loading/quantization settings
+        -> models/policy.py: base model, adapters, optional reference
+    -> inherited Transformers Trainer.train()
+        -> rollout -> reward gather -> group advantages
+        -> policy forward -> GRPO loss -> backward -> optimizer update
+    -> final model/adapter, tokenizer, state, model card
 ```
 
-Accelerate starts workers and supplies their distributed environment. It does
-not replace the application's training workflow. Each worker executes the same
-CLI and calls `trainer.train()`. The application never recursively launches
-Accelerate, `torchrun`, or Slurm.
+The runner resolves model-loading kwargs before dataset/model loading.
+`models/tokenizer.py` handles padding and adapter/base tokenizer fallback;
+`models/inference.py` loads full models or local PEFT adapters for generation.
 
-Evaluation uses `python -m rlcr evaluate --config EVALUATION.yaml`. Ad-hoc
-generation uses `python -m rlcr infer --model MODEL --prompt QUESTION`.
-These commands do not start training or initialize a distributed launcher.
+Architecture JSON is stored with base-model weights, not in experiment YAML.
+Full fine-tuning updates policy weights. LoRA/QLoRA freezes the base and trains
+adapters. Generation uses the current local policy with gradients disabled;
+there is no separate RL layer or rollout-model copy. Nonzero `beta` creates a
+KL reference copy. Native SDPA avoids an external attention extension.
 
-Dataset creation uses `python -m rlcr prepare-data --recipe NAME --output DIRECTORY`.
-The four former `data/creation_scripts` modules now live under `data/recipes`.
-Imports do not download data. Only this explicit command loads the source
-datasets, and it writes locally without publishing or overwriting existing
-outputs. Preparation randomness is seeded; regenerated datasets are not
-claimed to match the originally published random samples exactly.
+## GRPO components
 
-## Model ownership and memory
+- `dataloader.py`, `repeat_sampler.py`: expanded rollout batches and repeated inputs.
+- `rollout.py`: chat formatting, local generation, completion masks, reward calls.
+- `reward_evaluator.py`: callable/model rewards and gathering across workers.
+- `advantages.py`: weighted rewards, group centering, optional normalization.
+- `rollout_buffer.py`: shuffle/reuse across accumulation steps and iterations.
+- `log_probs.py`, `loss.py`: policy forwards, clipped objective, optional KL.
+- `training_metrics.py`: aggregation and completion logging.
 
-`models/training_kwargs.py` maps model settings to Transformers loading kwargs,
-including the quantization configuration and per-worker `LOCAL_RANK` device map.
-`models/policy.py` loads the policy, prepares a quantized base for adapter
-training, and creates a reference policy only when `beta` is nonzero.
+Only the prompt is sent to TRL's chat formatter; labels and other metadata go
+to reward callables. This avoids TRL treating `label` as its own preference-data
+schema. No label is injected into the model prompt by the training workflow.
 
-Full fine-tuning updates policy weights. LoRA/QLoRA updates adapters while the
-base is frozen. Generation uses the same local policy with gradients disabled;
-there is no separate RL layer or dedicated inference-model copy.
+A group currently means multiple completions of one prompt. Retaining
+`pair_id` metadata does **not** activate pair-aware training. Future paired
+sampling and advantage construction must coordinate both directions before
+generic shuffling/buffering. The standard trainer is still ordinary GRPO.
 
-The provided Accelerate configuration (`configs/accelerate/zero2.yaml`) uses
-ZeRO-2: forward-pass weights remain replicated, while optimizer state and
-gradients are partitioned. ZeRO-3/FSDP would require separate validation,
-especially around generation and reference models.
+## Data and generation boundaries
 
-Generation batches are larger than training microbatches:
+Training uses prepared text/chat prompts and exact string labels.
+Batch generation additionally requires stable unique identifiers.
+There are no dataset-name switches, named task prompts, answer normalization,
+symbolic verification, answer-repair generations, or external judge calls.
 
-```text
-local generation batch = per_device_train_batch_size × steps_per_generation
-global generation batch = local generation batch × number of workers
-```
+`evaluate` renders each prepared prompt, generates raw completions, and saves
+columns plus counts. Generic Brier/ECE helpers are available but not an official
+DiCo-NLI scorer. The task adapter must add official-label checks, source/pair
+validation, submission export, and pinned official scoring.
 
-By default, `steps_per_generation` equals `gradient_accumulation_steps`.
-Changing the launcher process count can therefore change the effective batch
-size; distributed execution does not automatically reduce local generation
-memory.
+## Launching and storage
 
-## Configuration and packaging
+`python -m rlcr` and the console alias `rlcr` invoke the same `cli.main`.
+Accelerate starts copies of this application; each worker calls `train()`.
+No Python application code launches another Accelerate process.
 
-- `requirements.txt`: the single runtime/test dependency list.
-- `pyproject.toml`: package/build/CLI metadata; reads dependencies from that list.
-- `configs/train/`: training YAML recipes; unsupported/unknown options are rejected.
-- `configs/accelerate/zero2.yaml`: process/distributed configuration.
-- `configs/eval/`: evaluation YAML with named `dataset`, `models`, and `output_dir` sections.
-- `data/`: input datasets only, never trained models or evaluation outputs.
-- `outputs/train/<run>/`: standard Transformers/PEFT model directory and checkpoints.
-- `outputs/eval/<run>/`: predictions and aggregate metrics from the same evaluation.
+`configs/accelerate/zero2.yaml` retains ZeRO-2: policy weights are replicated,
+optimizer state and gradients partitioned. The global rollout batch is the
+local batch times worker count. The local batch is
+`per_device_train_batch_size × steps_per_generation`, with
+`steps_per_generation` defaulting to accumulation steps.
+The global batch must be divisible by `num_generations`.
 
-The launcher delegates gradient accumulation and clipping to the experiment's
-training arguments. New runs persist resolved configuration snapshots, including
-CLI overrides. Only the global main training process writes the snapshot.
-Evaluation uses local output directories; it no longer attempts Hub dataset loads
-when an output directory does not exist. Incremental runs retain previously saved
-metrics when skipping a model and reject incompatible input row sets.
-
-Training script arguments are application-owned rather than inheriting inactive
-TRL script flags. The GRPO config still inherits Transformers training arguments,
-and LoRA/reference-sync options are still consumed by TRL. Extra model loader kwargs
-are merged with managed settings without allowing conflicting overrides. Shared
-Hub-loading settings are forwarded to the training tokenizer as well.
-
-See [configuration and migration details](configuration.md). All historical
-experiment variants remain available; multi-dataset evaluation suites and recipe
-deduplication are not part of this layout/schema change.
-
-Install editable for development (`python -m pip install -e .`) or normally for
-deployment (`python -m pip install .`), after the documented PyTorch bootstrap.
-Imports work outside the checkout's current working directory after installation.
-Config, dataset, and output paths are interpreted relative to the process's
-working directory; use absolute paths or set the working directory explicitly.
-Configs and datasets are external inputs, not embedded inside the package wheel.
+Data, recipes, and outputs stay separate; new task recipes are not bundled yet.
+Resolved snapshots describe application arguments, not launcher flags/hardware.
+Input metadata is preserved, and batch reruns reject changed input rows.
+Model-label caching is not content-addressed: change the output directory or
+request fresh generation after changing the model or generation configuration.
+Outputs are persisted after the entire batch-generation model list completes.
 
 ## Slurm and containers
 
-`scripts/slurm/train.sbatch` is a single-node, four-GPU example. It runs one
-Slurm task that starts the Accelerate workers. Adjust site-specific resource,
-partition, account, and time settings before submitting. It uses the repository
-venv by default; `RLCR_PYTHON` can select another installed environment.
+The single-node template `scripts/slurm/train.sbatch` launches Accelerate from
+one Slurm task. It defaults to the checkout's venv; set `RLCR_PYTHON` to override.
+Adjust site settings and submit from the repository root. Multi-node rendezvous
+needs separate setup and validation.
 
-For multiple nodes, use one launcher per node and supply the correct Accelerate
-machine count/rank and rendezvous address/port. The included Slurm template is
-not a validated multi-node deployment.
+A container can install the package and use
+`ENTRYPOINT ["python", "-m", "rlcr"]`, with explicit mounted input/cache/output
+paths. There is no Dockerfile or validated multi-node/container deployment yet.
 
-A future container can install the same package and use
-`ENTRYPOINT ["python", "-m", "rlcr"]`, with commands such as
-`train --config /configs/experiment.yaml`. Mount model/data caches and outputs
-explicitly. The Python entry point has no Slurm- or container-specific logic.
-
-## Migration from the flat layout
-
-| Previous location | New location |
-|---|---|
-| `rl_runner.py` | `cli.py` + `training/runner.py` + `models/training_kwargs.py` |
-| `GRPO_Trainer.py` | `training/grpo/` |
-| `arguments.py`, `eval/eval_args.py` | `arguments/` |
-| `dataset_processing.py` | `data/` |
-| `data/creation_scripts/*.py` | `data/recipes/` + the `prepare-data` command |
-| `reward_fns.py` | `rewards/` |
-| `trainer_utils.py` | `training/grpo/` + `training/profiling.py` |
-| `evaluation.py`, `eval/` helpers | `evaluation/` |
-| `inference_utils.py`, `inference_example.py` | `models/` + `inference/` + the `infer` command |
-| `system_prompts.py` | `text/prompts.py` |
-
-Paths in the right column are relative to `src/main/python/rlcr`.
-The former `CustomTrainer` class is now `GRPOTrainer`.
+See [configuration.md](configuration.md) for current schemas and removed options.

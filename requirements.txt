@@ -20,8 +20,6 @@ trl @ git+https://github.com/huggingface/trl.git@69ad852e5654a77f1695eb4c608906f
 # Tokenization, rewards, evaluation, and logging
 sentencepiece==0.2.0
 tiktoken==0.9.0
-math-verify==0.7.0
-scikit-learn==1.6.1
 pandas==2.2.3
 tqdm==4.67.1
 pyyaml==6.0.2

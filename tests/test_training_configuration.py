@@ -9,7 +9,6 @@ from rlcr.arguments.evaluation_model_config import LocalConfig
 from rlcr.arguments.grpo_config import GRPOConfig
 from rlcr.arguments.script_arguments import GRPOScriptArguments
 from rlcr.cli import main
-from rlcr.data.processing import process_dataset
 from rlcr.rewards.registry import build_reward_functions
 from rlcr.training.configuration import load_training_config
 
@@ -40,6 +39,9 @@ def training_yaml(tmp_path):
         "eval_log_keys",
         "set_pad_token",
         "orm_key",
+        "sys_prompt_name",
+        "task_spec",
+        "format_pattern",
         "gradient_checkpointing_use_reentrant",
         "ignore_bias_buffers",
     ],
@@ -117,44 +119,27 @@ def test_removed_options_are_not_exposed_as_dataclass_fields():
     assert "correctness_fn" not in {field.name for field in fields(LocalConfig)}
 
 
-def test_valid_prompt_defaults_and_reward_help():
-    from datasets import Dataset
-
+def test_reward_defaults_and_help():
     script = GRPOScriptArguments(dataset_name="unused")
-    evaluation = LocalConfig(name="test", model="unused")
-    dataset = Dataset.from_dict({"question": ["question"], "answer": ["answer"]})
-    for args in (script, evaluation):
-        result = process_dataset(dataset, args)
-        assert result[0]["prompt"][0]["role"] == "system"
-        assert result[0]["prompt"][0]["content"]
+    assert script.reward_funcs == ["accuracy", "brier"]
     assert len(build_reward_functions(script)) == 2
     help_text = GRPOScriptArguments.__dataclass_fields__["reward_funcs"].metadata["help"]
-    for name in ["accuracy", "format", "brier", "mean_confidence", "confidence_one_or_zero"]:
+    for name in ["accuracy", "format", "brier"]:
         assert name in help_text
         script.reward_funcs = [name]
         assert len(build_reward_functions(script)) == 1
 
 
-@pytest.mark.parametrize("task", ["orm", "sft", "typo"])
-def test_unsupported_task_modes_are_rejected(training_yaml, task):
-    path, config = training_yaml
-    config["task_spec"] = task
-    path.write_text(yaml.safe_dump(config))
-    with pytest.raises(ValueError, match="Only task_spec: gen"):
-        load_training_config(path)
-    with pytest.raises(ValueError, match="Only task_spec: gen"):
-        LocalConfig(name="test", model="unused", task_spec=task)
-
-
-@pytest.mark.parametrize("name", ["ver", "misspelled-prompt"])
-def test_invalid_prompt_names_are_rejected(name):
-    with pytest.raises(ValueError, match="Invalid system prompt"):
-        GRPOScriptArguments(dataset_name="unused", sys_prompt_name=name)
-    with pytest.raises(ValueError, match="Invalid system prompt"):
-        LocalConfig(name="test", model="unused", sys_prompt_name=name)
-
-
-@pytest.mark.parametrize("name", ["reasoning_steps", "cosine", "repetition_penalty"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "reasoning_steps",
+        "cosine",
+        "repetition_penalty",
+        "mean_confidence",
+        "confidence_one_or_zero",
+    ],
+)
 def test_unsupported_rewards_fail_before_dataset_loading(training_yaml, monkeypatch, name):
     from rlcr.training import runner
 

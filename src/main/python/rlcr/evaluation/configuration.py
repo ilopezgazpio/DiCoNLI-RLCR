@@ -17,7 +17,7 @@ def load_evaluation_config(path, **overrides):
     dataset = data.get("dataset")
     if not isinstance(dataset, dict):
         raise ValueError("dataset must be a mapping with a name (Hub ID or local directory).")
-    _check_keys(dataset, {"name", "config", "split", "hash_key", "sample_size"}, "dataset")
+    _check_keys(dataset, {"name", "config", "split", "id_column", "sample_size"}, "dataset")
     settings = {
         "dataset_name": dataset.get("name"),
         "dataset_config": dataset.get("config"),
@@ -31,7 +31,7 @@ def load_evaluation_config(path, **overrides):
             "dataset_name",
             "dataset_config",
             "split",
-            "hash_key",
+            "id_column",
             "sample_size",
             "output_dir",
             "fresh",
