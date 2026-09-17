@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools==80.9.0", "wheel==0.45.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rlcr"
+version = "0.1.0"
+description = "Training language models to reason about their uncertainty"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dynamic = ["dependencies"]
+
+[project.scripts]
+rlcr = "rlcr.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src/main/python"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
