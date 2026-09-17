@@ -31,7 +31,19 @@ def cli(*args, cwd):
     return result
 
 
-@pytest.mark.parametrize("command", [[], ["train"], ["evaluate"], ["infer"], ["prepare-data"]])
+@pytest.mark.parametrize(
+    "command",
+    [
+        [],
+        ["train"],
+        ["evaluate"],
+        ["infer"],
+        ["prepare-data"],
+        ["fetch-scorer"],
+        ["export-submission"],
+        ["score"],
+    ],
+)
 def test_cli_help_outside_checkout(command, tmp_path):
     assert "usage:" in cli(*command, "--help", cwd=tmp_path).stdout
 

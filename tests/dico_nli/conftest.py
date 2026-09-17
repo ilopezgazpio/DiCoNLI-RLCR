@@ -1,6 +1,8 @@
 """Synthetic task fixtures; no official examples or downloads are required."""
 import csv
 import hashlib
+import os
+from pathlib import Path
 
 import pytest
 
@@ -82,3 +84,14 @@ def split_spec(write_csv, task_rows, references):
         "reference": write_csv("reference.csv", references),
         "labeled": True,
     }
+
+
+@pytest.fixture
+def official_scorer_dir():
+    from rlcr.evaluation.dico_nli.scorer_pin import DEFAULT_SCORER_DIR
+
+    root = Path(__file__).resolve().parents[2]
+    path = Path(os.environ.get("RLCR_DICO_SCORER_DIR", root / DEFAULT_SCORER_DIR))
+    if not path.is_dir():
+        pytest.skip("Official scorer not installed: run python -m rlcr fetch-scorer first.")
+    return path

@@ -1,14 +1,14 @@
 # Architecture
 
 This repository retains one modular application, under `src/main/python/rlcr`.
-The old benchmark layer has been removed. DiCo-NLI data integration is implemented;
+The old benchmark layer has been removed. DiCo-NLI data, export, and scoring are implemented;
 the remaining steps are tracked in [short-term.md](short-term.md).
 
 ## Responsibilities
 
 | Package | Responsibility |
 |---|---|
-| `cli.py`, `__main__.py` | One CLI: train, evaluate (raw generation), infer, prepare-data |
+| `cli.py`, `__main__.py` | One CLI: train, evaluate (raw generation), infer, prepare-data, fetch-scorer, export-submission, score |
 | `arguments/` | One configuration dataclass per file |
 | `configuration/` | Resolved run-settings snapshots |
 | `data/validation.py` | Prepared prompt/label validation, no task transformations |
@@ -20,6 +20,7 @@ the remaining steps are tracked in [short-term.md](short-term.md).
 | `training/grpo/` | Sampling, rollouts, advantages, loss, metrics |
 | `inference/` | Prepared-prompt rendering, generation, optional token log-probabilities |
 | `evaluation/` | Batch-generation configs, raw outputs, local persistence; generic calibration helpers |
+| `evaluation/dico_nli/` | Gold-free export, local dataset boundaries, external scorer pin/acquisition/execution, score artifacts |
 
 Stateless operations are functions. Stateful components have separate files;
 there is no service framework or mixin hierarchy.
@@ -76,8 +77,20 @@ symbolic verification, answer-repair generations, or external judge calls.
 
 `evaluate` renders each prepared prompt, generates raw completions, and saves
 columns plus counts. Generic Brier/ECE helpers are available but not an official
-DiCo-NLI scorer. Input-label and source/pair validation are implemented in the
-data adapter; output-label checks, submission export, and official scoring remain pending.
+DiCo-NLI scorer. Input-label and source/pair validation belong to the data adapter.
+`export-submission` enforces output labels/confidence and exact ID coverage without
+using gold. `score` explicitly combines a submission with a reference and invokes
+the unchanged pinned upstream scorer. The source cache is external, not a second
+application package or entry point. Model training still needs task-specific
+prompt and output-label integration.
+
+Within `evaluation/dico_nli/`, `submission.py` owns pure validation/serialization;
+`datasets.py` owns local Arrow boundaries; `export.py` owns export artifacts.
+`scorer_pin.py` and `scorer_source.py` own version/setup verification;
+`official_scorer.py` owns isolated execution; `scoring.py` owns explicit gold and
+score provenance. `commands.py` only registers/dispatches shared CLI subcommands.
+No custom implementation of the official metrics is added. See
+[evaluation.md](evaluation.md) for the contracts and licensing boundary.
 
 The data adapter saves canonical records without prompts. Its immutable record
 keeps texts, labels, source IDs, and reference availability explicit. Future prompt

@@ -104,7 +104,8 @@ text/language pairs fail. Text whitespace is preserved; labels are not repaired.
 
 This importer deliberately requires complete reversible pairs **when references
 are supplied**. This is a stricter preparation contract, not a reimplementation
-of the scorer's validation policy. Task 2 will integrate the official scorer.
+of the scorer's validation policy. The separate [scoring commands](evaluation.md)
+now execute the official scorer without replacing its validation policy.
 
 All full input splits are checked for shared `instance_id` and `pair_id` before
 sampling. Either is a hard error, including across different language variants.
@@ -179,7 +180,8 @@ also run a training-only decontamination comparison. This is not a model result.
 
 Only the English official release was audited. Synthetic tests cover other
 language combinations and grouping; they are not validation of the other tracks'
-released files. The next task is official scoring and submission export.
+released files. Official scoring/export are now implemented separately; the next
+task is NLI prompt construction and training-label integration.
 
 The full CPU regression suite passed 248 tests (2 opt-in distributed tests skipped).
 A real-data 100-source-pair sample with seed 42 contained 173 instances: 73

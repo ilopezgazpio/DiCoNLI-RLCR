@@ -8,11 +8,12 @@ benchmark datasets, recipes, prompts, answer verifiers, judge/classifier workflo
 and example suites have been removed. Previous local data and model/output
 artifacts were moved to a recovery directory outside the checkout.
 
-**Current status:** DiCo-NLI data integration is implemented, not the complete system.
+**Current status:** DiCo-NLI data integration, submission export, and official scoring
+are implemented, not the complete system.
 Local CSV import, input-label/pair validation, source-group sampling, and provenance
 audits work. Prepared-prompt training, raw generation, and inference remain available.
-NLI prompt/output-label integration, official scoring/submission export, WordNet,
-and pair-aware GRPO are still pending.
+NLI prompt/training-label integration, WordNet, and pair-aware GRPO are still pending.
+Export already enforces the four official labels and strict confidence format.
 See [short term](docs/short-term.md), [medium term](docs/medium-term.md), and
 [long term](docs/long-term.md) for the research plan and results log.
 
@@ -55,6 +56,9 @@ python -m rlcr train --help
 python -m rlcr evaluate --help
 python -m rlcr infer --help
 python -m rlcr prepare-data --help
+python -m rlcr fetch-scorer --help
+python -m rlcr export-submission --help
+python -m rlcr score --help
 ```
 
 The installed `rlcr` command aliases the same CLI. Accelerate/Slurm launches this
@@ -67,7 +71,8 @@ configs/accelerate/   # Retained distributed launcher configuration
 configs/data/         # Pinned, data-only DiCo-NLI import recipe
 data/dico-nli/        # Ignored raw downloads and prepared task records
 outputs/train/        # Runtime model/adapter checkpoints
-outputs/eval/         # Runtime raw predictions and generation counts
+outputs/eval/         # Raw predictions, submissions, diagnostics, official scores
+.cache/rlcr/          # Ignored, checksum-pinned external scorer source
 docs/                 # Architecture, configuration, and research roadmap
 scripts/slurm/        # Single-node launcher template
 tests/                # Offline synthetic CPU regression fixtures
@@ -120,7 +125,8 @@ whitespace. Confidence must be finite and in [0, 1]; it estimates correctness of
 the emitted label. Invalid structure receives a negative reward, not a repair
 generation. Only `accuracy`, `format`, and `brier` rewards remain. Brier reward
 is `1 - (confidence - correctness)^2`; accuracy and Brier are the defaults.
-This generic parser does not yet enforce the official DiCo-NLI label vocabulary.
+The generic training parser does not yet enforce the official DiCo-NLI label
+vocabulary; submission export does.
 
 Batch generation also requires unique, nonempty string `instance_id` values
 (or a configured `id_column`). Original identifiers are retained, not hashed.
@@ -154,8 +160,8 @@ base and updates adapters. A nonzero `beta` creates a separate KL reference
 model; use `beta: 0` to avoid this extra copy (the default is 0.04).
 
 `evaluate` currently saves unmodified completions and generation counts only.
-Its `metrics.json` is **not** an official task score report. There is no LLM
-judge, answer-repair stage, classifier, or official submission exporter.
+Its `metrics.json` is **not** an official task score report. Export and official
+scoring are separate commands below. There is no LLM judge or answer-repair stage.
 
 Use a new output directory per experiment. Training auto-resumes the latest
 checkpoint if one exists; otherwise it can replace final weights in a reused
@@ -168,6 +174,42 @@ directory or `--fresh` after changing a model or generation settings.
 Mismatched input rows/order are rejected. Results are saved after the whole
 model list completes, so interruption may lose new results. Back up valuable
 outputs independently; `outputs/` is ignored by Git.
+
+## Submission export and official scoring
+
+Acquire the pinned official scorer once (explicit network access):
+
+```bash
+python -m rlcr fetch-scorer
+```
+
+After generation, select **one** completion column explicitly. The following
+prediction path and column are placeholders; this does not run a model:
+
+```bash
+python -m rlcr export-submission \
+  --predictions outputs/eval/new-run/predictions \
+  --instances data/dico-nli/prepared/en --split dev \
+  --prediction-column candidate-output_0 \
+  --output-dir outputs/eval/new-run/export
+python -m rlcr score \
+  --predictions outputs/eval/new-run/export/submission.csv \
+  --reference-dataset data/dico-nli/prepared/en --split dev \
+  --output-dir outputs/eval/new-run/scores
+```
+
+Export reads expected IDs from the independent `--instances` dataset, not its
+gold labels. All IDs must match and every response must be valid; otherwise no
+submission is produced. Raw responses/confidence stay in separate diagnostics.
+Only `submission.csv` (`instance_id,label`) is for submission.
+
+Scoring requires explicit gold: either the canonical `--reference-dataset` above
+or `--gold /path/to/official-reference.csv`. It executes unchanged, hash-verified
+upstream code and saves `scores.json`, `scores.txt`, and provenance. Scoring
+directories also contain a **local gold snapshot**, not an upload artifact.
+Use new output directories. No model or GPU is needed for export/scoring.
+See [evaluation guide](docs/evaluation.md) for subset rules, failure handling,
+offline/cluster setup, licensing, and scorer-version updates.
 
 ## Distributed execution and deployment
 
@@ -202,6 +244,9 @@ CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=1 HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1
 Tests construct tiny local models and synthetic data, without downloading any
 benchmark. They exercise exact-label parsing/rewards, prepared data, strict YAML,
 model loading, generation, full-model/LoRA updates and reloads, storage, and CLI.
+Official-scorer integration tests also run offline once `fetch-scorer` has completed;
+without its cache they explicitly skip, not pass. See the evaluation guide for
+using an external cache in CI.
 
 Opt-in two-worker CPU DDP checks require local inter-process networking:
 
@@ -211,7 +256,7 @@ CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=1 HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1
   -m pytest -q tests/test_distributed.py
 ```
 
-CPU checks do not validate GPU 4-bit kernels, task quality, or official scoring.
+CPU checks validate official scoring mechanics, not GPU 4-bit kernels or task quality.
 Successful execution does not establish calibration or the WordNet hypothesis.
 
 ## Attribution
@@ -226,5 +271,7 @@ This fork builds on [TRL](https://github.com/huggingface/trl) and
 their attribution. The paper PDF is a method reference, not a bundled benchmark.
 
 Task resources: [SemEval 2027 Task 2: DiCo-NLI](https://github.com/ilopezgazpio/SemEval-2027-Task-2-DiCo-NLI).
-The roadmap records the inspected task contract; pin and verify the official
-data/scorer revision when implementing the adapter.
+Data and scorer are pinned to commit `588968e610197ddc4c440314701cbc587afc4c1b`
+with SHA-256 checks. The external scorer retains upstream GPL-3.0 and attribution;
+it is not vendored into this MIT-licensed application. Recheck the task's current
+rules and scorer version before a competition submission.

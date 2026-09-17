@@ -63,14 +63,15 @@ Prepared training data needs a `prompt` column (text or chat messages), plus
 metadata; the caller supplies the complete task instructions in the prompt.
 Optional split names default to `train`/`test`; evaluation splits are required
 only when the training evaluation strategy is enabled.
-Subset sizes select the first rows; no task-aware pair sampling exists yet.
+Training subset sizes select the first rows, not source groups. Use the data
+preparation command's source-group sampling for DiCo-NLI subsets instead.
 
 Supported rewards are `accuracy`, `format`, and `brier`.
 All parse `<answer>LABEL</answer><confidence>NUMBER</confidence>`, with finite
 confidence in [0, 1]. Invalid structure gets -1 from each reward.
 Accuracy gives 1/0 for exact label correctness; Brier gives
 `1 - (confidence - correctness)^2`; format gives 1 for valid structure.
-No official label vocabulary is enforced yet. Default selected rewards are
+Training rewards do not yet enforce the official label vocabulary. Default selected rewards are
 accuracy and Brier; absent explicit weights, the trainer averages them.
 The roadmap's experiment weights therefore require explicit `reward_weights`.
 This is a foundation, not the planned knowledge/pair-aware reward.
@@ -100,7 +101,7 @@ rejected in serialized kwargs: use `HF_TOKEN` or Hub login.
 
 ## Batch generation
 
-`evaluate` temporarily means raw generation, not official task scoring:
+`evaluate` handles raw generation; `score` handles official task scoring:
 
 ```yaml
 dataset:
@@ -147,7 +148,17 @@ resolved-config.yaml  # Defaults and overrides resolved
 
 Raw malformed completions remain raw; no repair generation or confidence
 replacement occurs. Generic Brier/ECE helpers are not called as official scoring.
-The task adapter/scorer will be a separate, explicit addition.
+Use `export-submission` and `score` for the separate task-specific stages.
+
+## Submission and scoring
+
+`fetch-scorer` installs/verifies the pinned external scorer. `export-submission`
+requires local prediction and independent expected-ID datasets, an explicit
+`--prediction-column`, and a new output directory. `score` requires a two-column
+prediction file, either `--gold` or `--reference-dataset`, and another new output
+directory. `--split` defaults to `dev`; `--scorer-dir` selects the external cache.
+These small commands use explicit CLI options, not another YAML schema.
+See [evaluation.md](evaluation.md) for complete commands and artifact contracts.
 
 ## Removed options
 
@@ -158,7 +169,7 @@ These are intentional breaking changes, not silently ignored settings:
 | Training/evaluation `sys_prompt_name`, `task_spec` | Supply prepared prompts; no implicit task preprocessing |
 | Training `format_pattern` | One strict exact-label/confidence response contract |
 | `mean_confidence`, `confidence_one_or_zero` rewards | No direct incentive to report high/extreme confidence |
-| Evaluation `check_fn`, `check_fn_args`, `correctness_fn`, `pass_k_vals` | Legacy answer scoring removed; official task scoring pending |
+| Evaluation `check_fn`, `check_fn_args`, `correctness_fn`, `pass_k_vals` | Legacy answer scoring removed; use the explicit `score` command |
 | Evaluation `tasks`, `class_model`, `split_at_confidence` | Raw generation only |
 | Dataset `hash_key` | Preserve unique `id_column` identifiers |
 | `prepare-data --recipe ...` | Use the DiCo-NLI data-only `prepare-data --config ...` command |

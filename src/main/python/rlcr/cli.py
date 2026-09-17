@@ -3,6 +3,7 @@ import argparse
 import json
 
 from . import __version__
+from .evaluation.dico_nli.commands import add_scoring_commands
 
 
 def build_parser():
@@ -19,7 +20,7 @@ def build_parser():
     )
     train.add_argument("--config", required=True, help="Training YAML path")
     evaluate = commands.add_parser(
-        "evaluate", help="Generate batch predictions (task scoring is not implemented yet)"
+        "evaluate", help="Generate raw batch predictions; export and official scoring are separate"
     )
     evaluate.add_argument("--config", required=True, help="Evaluation YAML path")
     evaluate.add_argument("--output-dir", help="Override the local evaluation run directory")
@@ -53,6 +54,7 @@ def build_parser():
     )
     prepare.add_argument("--config", required=True, help="Data preparation YAML path")
     prepare.add_argument("--output-dir", help="Override the new prepared dataset directory")
+    add_scoring_commands(commands)
     return parser
 
 
@@ -96,6 +98,14 @@ def main(argv=None):
         except (ValueError, OSError) as error:
             parser.error(str(error))
         print(json.dumps(audit, indent=2))
+    elif args.command in {"fetch-scorer", "export-submission", "score"}:
+        from .evaluation.dico_nli.commands import run_scoring_command
+
+        try:
+            result = run_scoring_command(args)
+        except (ValueError, OSError) as error:
+            parser.error(str(error))
+        print(json.dumps(result, indent=2))
     else:
         from .inference.runner import run_inference
 

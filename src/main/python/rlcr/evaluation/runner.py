@@ -1,4 +1,4 @@
-"""Persist raw batch predictions; task-specific scoring is not implemented yet."""
+"""Persist raw batch predictions; export and task scoring are separate commands."""
 from copy import deepcopy
 from rlcr.configuration.snapshots import save_resolved_config
 from rlcr.data.validation import validate_prompt_dataset
