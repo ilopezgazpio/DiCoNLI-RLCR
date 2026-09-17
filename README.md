@@ -1,20 +1,18 @@
 # Beyond Binary Rewards: Training LMs to Reason about Their Uncertainty
 
-This repository contains the official code for the paper:
+This repository is a modified, refactored version of the code accompanying:
 
 > **Beyond Binary Rewards: Training LMs to Reason about Their Uncertainty**  
-> Mehul Damani, Isha Puri, Stewart Slocum, Idan Shenfeld, Yoon Kim, Jacob Andreas  
-> *[arXiv:2507.16806](https://arxiv.org/abs/2507.16806)*
+> Mehul Damani, Isha Puri, Stewart Slocum, Idan Shenfeld, Leshem Choshen, Yoon Kim, Jacob Andreas  
+> ICLR 2026 · [arXiv:2507.16806](https://arxiv.org/abs/2507.16806) · [Local paper PDF](docs/RLCR_paper_2507.16806v2.pdf)
+
+RLCR adds calibration rewards to reinforcement learning: the language model learns to generate answers and confidence estimates together. This adaptation supports full-model GRPO training and LoRA/QLoRA in one Python environment, with Transformers generation, one application CLI, and modular code under `src/main/python/rlcr`. It is not an unchanged copy of the upstream implementation.
 
 This repository builds on top of [TRL](https://github.com/huggingface/trl) and [Open-R1](https://github.com/huggingface/open-r1). We thank the authors and maintainers of these projects.
 
----
+## Installation
 
-## 🛠 Installation
-
-### Environment Setup
-
-Prerequisites: Python 3.10 with `venv` support, Git, and Linux x86_64. GPU training requires a CUDA 12.4-compatible NVIDIA driver.
+Prerequisites: Python 3.10 with `venv` support, Git, and Linux x86_64. GPU training requires a CUDA 12.4-compatible NVIDIA driver. The supplied recipes use BF16; check that your GPU supports it. No Conda environment is needed.
 
 From this repository's root directory:
 
@@ -39,29 +37,29 @@ Select the training method through the experiment YAML:
 
 | Method | Model settings |
 |---|---|
-| Full fine-tuning | `use_peft: false`, `load_in_4bit: false` |
-| LoRA | `use_peft: true`, `load_in_4bit: false` |
-| QLoRA | `use_peft: true`, `load_in_4bit: true` |
+| Full fine-tuning | `use_peft: false`, `load_in_4bit: false`, `load_in_8bit: false` |
+| LoRA | `use_peft: true`, `load_in_4bit: false`, `load_in_8bit: false` |
+| QLoRA | `use_peft: true`, `load_in_4bit: true`, `load_in_8bit: false` |
 
 Training and inference use Transformers. During training, the same model generates responses and computes the GRPO loss. QLoRA keeps the base weights quantized and frozen while training the LoRA adapters.
 
-Training defaults to PyTorch's native scaled dot-product attention (`attn_implementation: sdpa`), which is selected in all supplied training configs and requires no separate attention extension.
+There is no vLLM backend or dedicated rollout-model copy. Training uses PyTorch's native scaled dot-product attention through Transformers (`attn_implementation: sdpa` in all supplied recipes); neither `flash-attn` nor `xformers` is required. Accelerate is still used for training orchestration, not as an attention implementation. A nonzero GRPO `beta` creates a separate KL reference model and increases memory usage; all supplied training recipes set `beta: 0.0`, but the dataclass default is `0.04`.
 
-### Login to wandb 
+### Authentication and external services
 
-For experiments with `report_to: [wandb]`:
+Public model/data downloads need network access unless cached. Gated or private Hub repositories may also require access approval and Hugging Face authentication, for example through `HF_TOKEN`. Keep credentials out of committed YAML files. Inference/evaluation loaders currently allow model repository code (`trust_remote_code=True`), so use trusted model sources.
+
+For experiments with `report_to: [wandb]`, authenticate with:
 
 ```bash
 wandb login
 ```
 
-### Deepspeed & Accelerate Setup
+The full-model recipes retain `push_to_hub: true` and WandB reporting. The examples below explicitly disable both. The QLoRA recipes already disable them. Local training does not require publishing a model or enabling external tracking.
 
-`configs/accelerate/zero2.yaml` configures distributed execution using Accelerate and DeepSpeed ZeRO-2. The launch command selects the number of GPU processes. Gradient accumulation and clipping are taken from the training recipe (`auto` in the launcher configuration), avoiding competing values. This is an execution configuration, separate from experiment recipes and environment dependencies.
+## Application structure and entry point
 
-### Application Structure and Entry Point
-
-All application Python code lives in `src/main/python/rlcr`, organized into `arguments`, `data`, `models`, `rewards`, `training/grpo`, `evaluation`, and `inference` packages. The GRPO coordinator delegates generation, reward evaluation, loss calculation, buffering, and metrics to focused modules. See [the architecture guide](docs/architecture.md) for the module map and migration from the old files.
+All application Python code lives in `src/main/python/rlcr`, organized into `arguments`, `configuration`, `data`, `text`, `models`, `rewards`, `training`, `evaluation`, and `inference` packages. See [the architecture guide](docs/architecture.md) for the complete module map and migration from the old root-level files.
 
 There is one CLI: `python -m rlcr`, also available as the equivalent `rlcr` console command after installation.
 
@@ -75,7 +73,17 @@ python -m rlcr prepare-data --help
 
 Accelerate launches copies of this same application. Inside each worker, the training workflow creates `GRPOTrainer` and calls its inherited `train()` loop. There is no separate launcher embedded in the Python application.
 
-### Configuration, Data, and Outputs
+The main training path is:
+
+```text
+cli.py -> training/configuration.py -> training/runner.py
+    -> training/grpo/trainer.py -> models/policy.py loads the policy/adapters
+    -> Trainer.train(): generate -> rewards -> group advantages -> GRPO loss -> update
+```
+
+`training/grpo/` separates sampling, rollout buffering, reward gathering, advantages, loss, and logging. GRPO is an objective and training procedure, not an extra neural-network layer trained alongside the LM. Full fine-tuning updates the policy weights; LoRA/QLoRA updates its adapters. Generation uses that same current policy without gradients, followed by gradient-bearing training forwards.
+
+## Configuration, data, and outputs
 
 ```text
 configs/train/       # Training YAML recipes: model, data, rewards, optimization
@@ -86,42 +94,46 @@ outputs/train/      # Saved models/adapters, tokenizer files, checkpoints
 outputs/eval/       # Per-run predictions/ and metrics.json together
 ```
 
+Training recipes select a base model with `model_name_or_path`; evaluation model entries use `model`. The base architecture's `config.json` comes from the model's Hub repository or local model directory, not `configs/train/`. Downloaded Hub assets use the Hugging Face cache unless configured otherwise. Local adapter directories retain `adapter_config.json` and still require access to their referenced base model.
+
+Run the examples from the repository root. Relative paths are resolved against the current working directory, **not** the YAML file's directory. Configs and datasets are external inputs, not bundled in the installed Python package.
+
 Each new training/evaluation invocation records its resolved settings in
 `output_dir/resolved-config.yaml`. Changed settings archive the previous snapshot
 under `config-history/`. Existing historical artifacts are preserved; their exact
 resolved configurations have not been reconstructed. Generated outputs are ignored
-by Git, so back up valuable runs separately.
+by Git, so back up valuable runs separately. Snapshots describe application settings, not the full launcher command, hardware, or a guarantee of successful completion; retain job scripts/logs too.
 
 See [the configuration guide](docs/configuration.md) for the YAML schema, overrides,
 path conventions, and old-to-new locations. No configuration inheritance or extra
 configuration dependency is required.
 
-### HuggingFace Models and Data
-All models and datasets are available at this [RLCR HuggingFace Collection.](https://huggingface.co/collections/mehuldamani/rlcr-68912f9731b0bce30e4cc8c0)
+### Models and datasets
+
+Published paper assets are linked from the [RLCR Hugging Face collection](https://huggingface.co/collections/mehuldamani/rlcr-68912f9731b0bce30e4cc8c0). Local adapters and historical evaluation outputs are separate artifacts; do not assume they exist in a fresh clone.
 
 The former `data/creation_scripts/` recipes are now import-safe modules under `rlcr.data.recipes`, executed through the same CLI:
 
 ```bash
-python -m rlcr prepare-data --recipe trivia --output data/trivia --seed 42
+python -m rlcr prepare-data --recipe trivia --output data/trivia-prepared --seed 42
 ```
 
 Available recipes are `hotpotqa`, `big-math-digits`, `gpqa`, and `trivia`. This command downloads source datasets and saves a new local dataset directory; it never uploads to the Hub or overwrites an existing output. Randomized preparation is seeded. Use the published datasets above when reproducing the exact paper datasets.
 
----
+Training accepts a Hub dataset ID or a directory saved with `datasets.save_to_disk`, with the configured splits (defaults: `train`/`test`). Examples need a `question` or `problem` column; correctness/calibration rewards also need `answer` and compatible task-specific metadata. In particular, the training accuracy reward selects Hotpot exact matching using `source: hotpot`; otherwise it uses math verification. Arbitrary CSV/JSON schemas are not automatically adapted or fully validated in advance.
 
-## 🚀 Training
+## Training
 
-To run RLCR on hotpot:
+Start with the 1.5B single-GPU QLoRA smoke recipe (10 optimizer steps). Choose a **new output directory** for each independent experiment:
+
 ```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch --num_processes 4 --config_file configs/accelerate/zero2.yaml --module rlcr train --config configs/train/hotpot-qwen7b-rlcr-full.yaml
+CUDA_VISIBLE_DEVICES=0 python -m rlcr train \
+  --config configs/train/hotpot-qwen1.5b-rlcr-qlora-smoke.yaml \
+  --output_dir outputs/train/quickstart-qlora \
+  --report_to none --push_to_hub false
 ```
 
-For a small single-GPU QLoRA run:
-```bash
-CUDA_VISIBLE_DEVICES=0 python -m rlcr train --config configs/train/hotpot-qwen1.5b-rlcr-qlora-smoke.yaml
-```
-
-Training YAML fields can be overridden on the same command line, for example `--max_steps 10 --report_to none --push_to_hub false`. Disabling hub upload and external tracking is useful for local smoke runs.
+Training YAML fields can be overridden with Transformers-style underscore flags, for example `--max_steps 10 --dataset_name /datasets/hotpot`. Evaluation/inference CLI flags instead use hyphens, such as `--output-dir` and `--load-in-4bit`.
 
 Training rejects unknown YAML keys. Process counts belong to Accelerate, not the
 training recipe. Inactive legacy options have been removed; see the
@@ -129,32 +141,54 @@ training recipe. Inactive legacy options have been removed; see the
 Extra model-loading kwargs such as `model_init_kwargs: {local_files_only: true}`
 are honored, while duplicates of managed model/quantization settings are rejected.
 
+Use `sys_prompt_name` for training/evaluation prompts and `check_fn` for evaluation scoring. Prompt names are case-sensitive; the training/evaluation default is `gen`. Supported rewards are `accuracy`, `format`, `brier`, `mean_confidence`, and `confidence_one_or_zero`. Only `task_spec: gen` is supported: the `sft-rlcr` recipe starts GRPO from an existing SFT checkpoint, not a separate SFT training stage. Classifier-based evaluation remains available, but there is no ORM training command.
+
+### Checkpoints and safe reruns
+
+The final model or adapter, tokenizer, and trainer state are saved directly in `output_dir`. Intermediate checkpoints are separate `checkpoint-*` directories.
+
+- The supplied QLoRA recipes use `save_strategy: "no"`: they save at successful completion, not periodically. For longer jobs, enable intermediate saves, for example `--save_strategy steps --save_steps 100 --save_total_limit 2`.
+- The runner automatically resumes the latest checkpoint in an existing output directory unless `--resume_from_checkpoint /path/to/checkpoint-N` selects another one. A final adapter/model directory is not a complete optimizer-resume checkpoint.
+- If an existing output directory has no checkpoint, training can start again and replace its final weights. There is no protective overwrite preflight. A new directory is the safest way to start a new experiment.
+
+### Distributed training
+
+For full-model training on four GPUs:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
+  --num_processes 4 --config_file configs/accelerate/zero2.yaml \
+  --module rlcr train --config configs/train/hotpot-qwen7b-rlcr-full.yaml \
+  --output_dir outputs/train/hotpot-full-example \
+  --report_to none --push_to_hub false
+```
+
+`zero2.yaml` is a launcher configuration, not an environment file, and is not needed for the direct single-GPU command. It uses DeepSpeed ZeRO-2: each GPU holds policy weights, while optimizer state and gradients are partitioned. It does **not** shard the base weights to fit a model too large for one GPU. Gradient accumulation and clipping are taken from the training recipe (`auto` in the launcher); process counts belong to Accelerate.
+
+Workers generate local completions and gather rewards so GRPO groups can span workers. Weight updates are synchronized. Generation memory depends on the local rollout batch, not just the training microbatch:
+
+```text
+local generation batch  = per_device_train_batch_size × steps_per_generation
+global generation batch = local generation batch × number of workers
+```
+
+`steps_per_generation` defaults to `gradient_accumulation_steps`; alternatively set a global `generation_batch_size`, not both. These batches count completion sequences, including the `num_generations` repetitions per question. The global generation batch must be divisible by `num_generations`. Increasing worker count does not automatically reduce local rollout memory. The full-model recipes have large rollout batches and are not small-GPU presets; start from a QLoRA recipe when memory is limited.
+
+### Slurm and containers
+
 For Slurm, a single-node template launches the same application:
 
 ```bash
-sbatch scripts/slurm/train.sbatch configs/train/hotpot-qwen7b-rlcr-full.yaml
+sbatch scripts/slurm/train.sbatch configs/train/hotpot-qwen7b-rlcr-full.yaml \
+  --output_dir outputs/train/hotpot-slurm-example \
+  --report_to none --push_to_hub false
 ```
 
-Adjust the template's resource/account/partition/time settings for your cluster before submission. It launches one Accelerate process per allocated GPU from a single Slurm task. See [deployment notes](docs/architecture.md#slurm-and-containers) for working directories, multi-node considerations, and a future container entry point. No Slurm job or container build is needed for local execution.
+Adjust the template's resource/account/partition/time settings for your cluster before submission. Submit from the repository root. It uses `.venv/bin/python` by default (`RLCR_PYTHON` can override this) and launches one Accelerate worker per allocated GPU from a **single Slurm task**. Do not also request one Slurm task per GPU.
 
-### 📝 Notes
+The template is single-node; multi-node launch/rendezvous settings need separate setup and validation. There is no Dockerfile yet. A container can install the package and use `python -m rlcr` as its entry point, mounting configs, caches, data, and writable outputs. See [deployment notes](docs/architecture.md#slurm-and-containers).
 
-- Wandb logs from reproduced runs available [here](https://wandb.ai/mehuldamani/RLCR?nw=nwusermehuldamani). Intermediate generations are also logged and are useful for debugging. 
-- Additional training examples are available in `scripts/train_examples.sh`.
-- Training experiments are defined under `configs/train/`; distributed launcher settings live under `configs/accelerate/`.
-- **Compute details**:
-  - We ran HotpotQA experiments on **4×A100 GPUs**
-  - Math experiments were run on **6×A100 GPUs**
-  - The **generation batch size** is computed as:
-    ```
-    generation_batch_size = num_processes × per_device_train_batch_size × gradient_accumulation_steps
-    ```
-    It should be kept **constant or increased** if more compute is available. Lowering it may lead to instability during training.
-- **Limitations**:
-  - This field is evolving rapidly. We believe that both the **base RL implementation** and **hyperparameter settings** can be further improved. Doing so may reduce some training instabilities we encountered and enhance model calibration and reasoning quality.
-  - Learning well-calibrated policies requires exploration over a range of verbalized confidences. If training problems have similar difficulty, the policy may collapse to outputting a narrow band—or even a single—confidence value, hindering calibration. If this behavior is encountered, incentivizing more exploration in verbalized confidence scores through higher temperature/modifications to system prompt can be effective.
-
-We welcome suggestions and contributions!
+Additional research presets are in [scripts/train_examples.sh](scripts/train_examples.sh); review their resources, output paths, and publication settings before running. [Original research WandB logs](https://wandb.ai/mehuldamani/RLCR?nw=nwusermehuldamani) are historical results, not validation of this refactor.
 
 ---
 
