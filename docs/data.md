@@ -181,9 +181,10 @@ also run a training-only decontamination comparison. This is not a model result.
 
 Only the English official release was audited. Synthetic tests cover other
 language combinations and grouping; they are not validation of the other tracks'
-released files. Official scoring/export are now implemented separately; the next
-task is conservative WordNet evidence and its training-only audit. NLI prompts
-and training-label integration are implemented; GPU/model-quality gates remain open.
+released files. Official scoring/export, NLI prompts, and training-label integration
+are implemented. The current unfinished task is Task 4: ordinary A/C GPU QLoRA
+training/save/reload/evaluation. WordNet and its training-only audit are Task 5,
+after the ordinary training acceptance gate passes.
 
 The full CPU regression suite passed 248 tests (2 opt-in distributed tests skipped).
 A real-data 100-source-pair sample with seed 42 contained 173 instances: 73

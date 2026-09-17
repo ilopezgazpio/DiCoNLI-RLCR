@@ -14,6 +14,8 @@ Local CSV import, input-label/pair validation, source-group sampling, and proven
 audits work. Prepared-prompt training, raw generation, and inference remain available.
 CPU full-model/LoRA smoke tests pass. WordNet, pair-aware GRPO, a meaningful base-model
 baseline, and GPU QLoRA validation are still pending. This is not yet the complete system.
+The current task is **Task 4: ordinary A/C GPU QLoRA training/save/reload/evaluation**.
+Its acceptance gate is not satisfied by CPU tests; WordNet (Task 5) comes afterward.
 See [short term](docs/short-term.md), [medium term](docs/medium-term.md), and
 [long term](docs/long-term.md) for the research plan and results log.
 

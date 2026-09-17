@@ -1,8 +1,11 @@
-# No-knowledge DiCo-NLI training — Task 3
+# NLI prompts and ordinary RLCR training — Tasks 3 and 4
 
 The ordinary one-policy GRPO path now supports the task's prompt and four-label
 output contract. WordNet and pair-aware advantages are **not** active yet.
 One GRPO group still contains several responses to one ordered prompt.
+Task 3's prompt/output contract is implemented. Task 4 is only partially
+validated: CPU full-model/LoRA checks pass, but the matched real-model A/C GPU
+QLoRA train/save/reload/evaluate acceptance gate is still open.
 
 ## Versioned prompt preparation
 
@@ -141,5 +144,13 @@ Prompt preparation has also run on all 3,042 train and 660 dev English records.
 No working NVIDIA driver was accessible in this session: GPU 4-bit kernels,
 memory use, and QLoRA remain unvalidated. No B0, calibration gain, or task-quality
 comparison has been completed. Results and remaining gates are in
-[short-term.md](short-term.md); the next implementation task is the conservative
-WordNet provider and training-only coverage/error audit.
+[short-term.md](short-term.md). On resuming Task 4, outside-sandbox checks reported
+an NVIDIA driver/library mismatch and CUDA initialization error 804. The local
+RTX 4090 and `Qwen/Qwen2.5-1.5B-Instruct` at revision
+`989aa7980e4cf806f80c7fef2b1adb7bc71aa306` are now selected for the matched A/C smoke.
+Installed NVIDIA modules/libraries are 580.178.04 but the loaded module is
+580.173.02; a user-controlled reboot followed by fresh NVML/CUDA checks is the
+next step. No reboot or real-model GPU training has been performed.
+Do not proceed to WordNet (Task 5) until Task 4 demonstrates adapter changes,
+unchanged frozen base weights, reload, and scorer-valid predictions with a recorded
+compute budget. Those checks establish execution, not improvement.
