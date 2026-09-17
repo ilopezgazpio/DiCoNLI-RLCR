@@ -68,9 +68,10 @@ reverse link; other labels require a reciprocal link. The importer never guesses
 links from ID suffixes, duplicate texts, or label predictions.
 
 Inputs, IDs, labels, and link metadata remain together as auditable data, but the
-future prompt builder must whitelist only texts/languages and permitted evidence.
-It must not stringify the entire record. This release creates no `prompt` column;
-the resulting DatasetDict cannot yet be passed directly to training/evaluation.
+prompt builder whitelists only texts/languages. It never stringifies the entire
+record. `prepare-data` creates no `prompt` column; run the separate
+`prepare-prompts --dataset INPUT --output-dir NEW` transformation before
+training/evaluation. See [training.md](training.md) for its contract and provenance.
 
 ## Recipe and validation policy
 
@@ -181,7 +182,8 @@ also run a training-only decontamination comparison. This is not a model result.
 Only the English official release was audited. Synthetic tests cover other
 language combinations and grouping; they are not validation of the other tracks'
 released files. Official scoring/export are now implemented separately; the next
-task is NLI prompt construction and training-label integration.
+task is conservative WordNet evidence and its training-only audit. NLI prompts
+and training-label integration are implemented; GPU/model-quality gates remain open.
 
 The full CPU regression suite passed 248 tests (2 opt-in distributed tests skipped).
 A real-data 100-source-pair sample with seed 42 contained 173 instances: 73

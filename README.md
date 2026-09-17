@@ -8,12 +8,12 @@ benchmark datasets, recipes, prompts, answer verifiers, judge/classifier workflo
 and example suites have been removed. Previous local data and model/output
 artifacts were moved to a recovery directory outside the checkout.
 
-**Current status:** DiCo-NLI data integration, submission export, and official scoring
-are implemented, not the complete system.
+**Current status:** DiCo-NLI data integration, versioned prompts, four-label
+accuracy/RLCR training, submission export, and official scoring are implemented.
 Local CSV import, input-label/pair validation, source-group sampling, and provenance
 audits work. Prepared-prompt training, raw generation, and inference remain available.
-NLI prompt/training-label integration, WordNet, and pair-aware GRPO are still pending.
-Export already enforces the four official labels and strict confidence format.
+CPU full-model/LoRA smoke tests pass. WordNet, pair-aware GRPO, a meaningful base-model
+baseline, and GPU QLoRA validation are still pending. This is not yet the complete system.
 See [short term](docs/short-term.md), [medium term](docs/medium-term.md), and
 [long term](docs/long-term.md) for the research plan and results log.
 
@@ -56,6 +56,7 @@ python -m rlcr train --help
 python -m rlcr evaluate --help
 python -m rlcr infer --help
 python -m rlcr prepare-data --help
+python -m rlcr prepare-prompts --help
 python -m rlcr fetch-scorer --help
 python -m rlcr export-submission --help
 python -m rlcr score --help
@@ -69,7 +70,9 @@ application; each training worker calls `GRPOTrainer.train()`.
 src/main/python/rlcr/  # Modular application and reusable GRPO infrastructure
 configs/accelerate/   # Retained distributed launcher configuration
 configs/data/         # Pinned, data-only DiCo-NLI import recipe
-data/dico-nli/        # Ignored raw downloads and prepared task records
+configs/train/        # No-knowledge RLCR starter recipe; accuracy-only via overrides
+configs/eval/         # Matched base/checkpoint generation recipe
+data/dico-nli/        # Ignored raw downloads, canonical records, versioned prompts
 outputs/train/        # Runtime model/adapter checkpoints
 outputs/eval/         # Raw predictions, submissions, diagnostics, official scores
 .cache/rlcr/          # Ignored, checksum-pinned external scorer source
@@ -78,8 +81,8 @@ scripts/slurm/        # Single-node launcher template
 tests/                # Offline synthetic CPU regression fixtures
 ```
 
-There are no bundled DiCo-NLI training/evaluation recipes yet.
-Future task recipes can live in `configs/train/` and `configs/eval/`.
+The bundled training/evaluation recipes contain **placeholder model paths**, not
+a selected or validated competition model. Supply your model and compatible settings.
 Paths in YAML are relative to the process working directory, not the YAML file.
 Data and configs are external inputs, not packaged resources.
 
@@ -102,8 +105,17 @@ checksum manifest. The current working checkout already has this prepared output
 reruns require a new `--output-dir`. Existing destinations are never overwritten.
 The importer does not download files or load a model.
 
-These are **task records, not model-ready prompts**. Prompt construction is a
-separate upcoming step. The English audit passed ID/pair checks but flagged four
+These are **task records, not model-ready prompts**. Build the separate prompt dataset:
+
+```bash
+python -m rlcr prepare-prompts --dataset data/dico-nli/prepared/en \
+  --output-dir data/dico-nli/prompted/en
+```
+
+Only texts/languages enter the prompt. Gold labels, IDs, and reverse links stay
+as metadata. No model/download is needed; prompts and source hashes are recorded.
+This checkout already has both datasets; reruns need new destinations.
+The English audit passed ID/pair checks but flagged four
 text-pair overlaps under distinct train/dev source IDs; see the data guide before
 interpreting experimental results.
 
@@ -123,10 +135,10 @@ Responses use one strict format:
 The label is matched exactly, including case, after trimming tag-boundary
 whitespace. Confidence must be finite and in [0, 1]; it estimates correctness of
 the emitted label. Invalid structure receives a negative reward, not a repair
-generation. Only `accuracy`, `format`, and `brier` rewards remain. Brier reward
-is `1 - (confidence - correctness)^2`; accuracy and Brier are the defaults.
-The generic training parser does not yet enforce the official DiCo-NLI label
-vocabulary; submission export does.
+generation. DiCo recipes use `dico_accuracy` and `dico_brier`; `dico_format` is
+also available. All three reject unknown labels as invalid. Brier reward is
+`1 - (confidence - correctness)^2`. Unrestricted `accuracy`, `format`, and
+`brier` remain reusable primitives; do not mix them with DiCo rewards.
 
 Batch generation also requires unique, nonempty string `instance_id` values
 (or a configured `id_column`). Original identifiers are retained, not hashed.
@@ -134,12 +146,16 @@ It accepts prepared prompts, **not** raw official CSV files.
 
 ## Training and generation
 
-Supply your own prepared dataset and YAML; the following paths are placeholders:
+Use the starter recipes with an explicitly selected model. Model paths below are
+placeholders; the training recipe defaults to single-policy QLoRA, `beta: 0`,
+and ten smoke-test steps, not a tuned experiment:
 
 ```bash
-python -m rlcr train --config /path/to/training.yaml \
+python -m rlcr train --config configs/train/dico-nli-rlcr.yaml \
+  --model_name_or_path /path/to/base-instruct \
   --output_dir outputs/train/new-run --report_to none --push_to_hub false
-python -m rlcr evaluate --config /path/to/generation.yaml \
+python -m rlcr evaluate --config configs/eval/dico-nli.yaml \
+  --model outputs/train/new-run \
   --output-dir outputs/eval/new-run
 python -m rlcr infer --model /path/to/model-or-adapter \
   --system-prompt "Return the requested label and confidence." \
@@ -150,6 +166,14 @@ Inference's optional `--system-prompt` is literal text, not a preset name.
 Repeat `--prompt` for multiple inputs. Each yields a JSON record of completions.
 Use `--load-in-4bit`, `--n`, `--temperature`, `--max-tokens`, and
 `--hf-batch-size` as appropriate.
+
+For accuracy-only training, override `--reward_funcs dico_accuracy --reward_weights 1.0`.
+For a frozen baseline, run `evaluate` on the base model before training using the
+same prompts. DiCo training checks labels and tokenized prompt lengths before
+loading policy weights; too-long prompts fail instead of losing instructions.
+Training logs include invalid-output and zero-reward-variance rates. See the
+[training guide](docs/training.md) for full/LoRA overrides, sampling, validation
+limits, and why all-invalid GRPO groups cannot teach a model the output format.
 
 Training selects full fine-tuning with `use_peft: false`; LoRA with
 `use_peft: true`; QLoRA additionally sets `load_in_4bit: true`.

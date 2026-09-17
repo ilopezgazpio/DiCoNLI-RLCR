@@ -2,8 +2,9 @@
 
 `configs/` holds human-authored configuration, `data/` input datasets, and
 `outputs/` generated model/prediction artifacts. `configs/accelerate/zero2.yaml`
-and `configs/data/dico-nli-en.yaml` are bundled; DiCo-NLI training/evaluation recipes
-are pending. Do not use old benchmark recipes against the cleaned workflow.
+and `configs/data/dico-nli-en.yaml` are bundled alongside the no-knowledge starter
+recipes `configs/train/dico-nli-rlcr.yaml` and `configs/eval/dico-nli.yaml`.
+Their model paths are placeholders; they are not GPU-validated presets.
 
 ## Data preparation
 
@@ -11,7 +12,8 @@ are pending. Do not use old benchmark recipes against the cleaned workflow.
 official CSVs into canonical task records, with strict validation, source-group
 sampling, hashes, and audit reports. Its data-only YAML is independent of model
 settings. See [data.md](data.md) for all fields, acquisition steps, and limitations.
-The output has no prompt column yet; it is not directly training-ready.
+The output has no prompt column. Run `prepare-prompts --dataset INPUT --output-dir NEW`
+to create the versioned model-ready dataset; see [training.md](training.md).
 
 ## Training
 
@@ -39,7 +41,7 @@ bf16: true
 attn_implementation: sdpa
 gradient_checkpointing: true
 gradient_checkpointing_kwargs: {use_reentrant: false}
-reward_funcs: [accuracy, brier]
+reward_funcs: [dico_accuracy, dico_brier]
 reward_weights: [1.0, 0.5]
 beta: 0.0
 per_device_train_batch_size: 1
@@ -66,15 +68,23 @@ only when the training evaluation strategy is enabled.
 Training subset sizes select the first rows, not source groups. Use the data
 preparation command's source-group sampling for DiCo-NLI subsets instead.
 
-Supported rewards are `accuracy`, `format`, and `brier`.
+Supported generic rewards are `accuracy`, `format`, and `brier`; DiCo bindings are
+`dico_accuracy`, `dico_format`, and `dico_brier`. Do not mix families.
 All parse `<answer>LABEL</answer><confidence>NUMBER</confidence>`, with finite
 confidence in [0, 1]. Invalid structure gets -1 from each reward.
 Accuracy gives 1/0 for exact label correctness; Brier gives
 `1 - (confidence - correctness)^2`; format gives 1 for valid structure.
-Training rewards do not yet enforce the official label vocabulary. Default selected rewards are
-accuracy and Brier; absent explicit weights, the trainer averages them.
+DiCo rewards reject labels outside the four-label vocabulary; unrestricted generic
+defaults remain accuracy and Brier. Absent explicit weights, the trainer averages them.
 The roadmap's experiment weights therefore require explicit `reward_weights`.
 This is a foundation, not the planned knowledge/pair-aware reward.
+
+The DiCo starter recipe uses explicit weights `[1.0, 0.5]`, `scale_rewards: false`,
+and `beta: 0`. Accuracy-only overrides both names and weights:
+`--reward_funcs dico_accuracy --reward_weights 1.0`. DiCo training rejects first-N
+subset flags and checks tokenized prompt lengths before policy loading; it will
+not silently truncate instructions. Training logs add invalid-output and
+zero-reward-variance rates. Model context capacity still needs an explicit budget.
 
 Unknown YAML keys and unused CLI overrides fail. The parser derives keys from
 application dataclasses, preserves override precedence and an optional `env`

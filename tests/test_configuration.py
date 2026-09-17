@@ -162,7 +162,7 @@ def test_documented_training_example_parses(tmp_path):
     script, training, model = load_training_config(
         path, ["--use_cpu", "true", "--bf16", "false", "--output_dir", str(tmp_path / "output")]
     )
-    assert script.reward_funcs == ["accuracy", "brier"]
+    assert script.reward_funcs == ["dico_accuracy", "dico_brier"]
     assert model.use_peft and model.load_in_4bit
     assert training.generation_batch_size % training.num_generations == 0
 

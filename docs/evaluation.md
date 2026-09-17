@@ -11,9 +11,9 @@ prepared prompts -> evaluate -> raw completions
 explicit reference + submission.csv -> score -> official reports + provenance
 ```
 
-NLI prompt construction/training integration is the next task. These commands
-already work with synthetic responses or externally supplied predictions;
-they do not establish a trained DiCo-NLI model.
+NLI prompt construction/training integration is now available; see
+[training.md](training.md). These commands also work with synthetic responses or
+externally supplied predictions; successful scoring does not establish model quality.
 
 ## Official scorer setup and provenance
 

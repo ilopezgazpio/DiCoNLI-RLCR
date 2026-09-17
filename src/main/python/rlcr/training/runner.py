@@ -7,11 +7,13 @@ from transformers.trainer_utils import get_last_checkpoint
 from trl import get_peft_config
 
 from rlcr.models.training_kwargs import training_model_kwargs
+from rlcr.models.tokenizer import load_training_tokenizer
 from rlcr.configuration.snapshots import save_resolved_config
-from rlcr.rewards.registry import build_reward_functions
+from rlcr.rewards.registry import build_reward_functions, DICO_REWARDS
 from .datasets import load_training_datasets
 from .grpo.trainer import GRPOTrainer
 from .logging import configure_logging
+from .prompt_limits import check_prompt_lengths
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,17 @@ def run_training(script_args, training_args, model_args):
     if checkpoint is not None:
         logger.info("Resuming training from %s", checkpoint)
 
+    train_dataset, eval_dataset = load_training_datasets(script_args, training_args)
+    tokenizer = None
+    if DICO_REWARDS & set(script_args.reward_funcs):
+        tokenizer = load_training_tokenizer(model_args.model_name_or_path, model_kwargs)
+        lengths = check_prompt_lengths(
+            tokenizer,
+            {"train": train_dataset, "eval": eval_dataset},
+            training_args.max_prompt_length,
+        )
+        logger.info("DiCo-NLI maximum rendered prompt lengths: %s", lengths)
+
     # Capture parser defaults and CLI overrides before injecting runtime model objects.
     if training_args.process_index == 0:
         settings = {**asdict(script_args), **training_args.to_dict(), **asdict(model_args)}
@@ -37,7 +50,6 @@ def run_training(script_args, training_args, model_args):
         settings["resume_from_checkpoint"] = checkpoint
         save_resolved_config(training_args.output_dir, settings)
 
-    train_dataset, eval_dataset = load_training_datasets(script_args, training_args)
     training_args.model_init_kwargs = model_kwargs
     if training_args.wandb_project is not None:
         os.environ["WANDB_PROJECT"] = training_args.wandb_project
@@ -47,6 +59,7 @@ def run_training(script_args, training_args, model_args):
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
+        processing_class=tokenizer,
         peft_config=get_peft_config(model_args) if model_args.use_peft else None,
     )
 

@@ -1,4 +1,4 @@
-"""Dataset selection and dataset-neutral reward settings."""
+"""Prepared dataset selection and explicit reward-family settings."""
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -13,7 +13,9 @@ class GRPOScriptArguments:
     dataset_test_split: str = field(default="test")
     reward_funcs: list[str] = field(
         default_factory=lambda: ["accuracy", "brier"],
-        metadata={"help": "Reward functions: accuracy, format, brier."},
+        metadata={
+            "help": "Rewards: accuracy, format, brier; four-label bindings: dico_accuracy, dico_format, dico_brier. Do not mix families."
+        },
     )
     train_subset_size: Optional[int] = field(default=None)
     eval_subset_size: Optional[int] = field(default=None)

@@ -4,6 +4,7 @@
 # Downloaded task inputs and generated Arrow datasets; recipes pin their hashes.
 /data/dico-nli/raw/
 /data/dico-nli/prepared/
+/data/dico-nli/prompted/
 __pycache__/
 *.py[cod]
 *$py.class

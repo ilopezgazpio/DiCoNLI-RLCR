@@ -8,7 +8,7 @@ _PREDICTION = re.compile(
 )
 
 
-def parse_prediction(completion):
+def parse_prediction(completion, *, allowed_labels=None):
     """Return (label, confidence), or None for an invalid structured response."""
     if isinstance(completion, list):
         if len(completion) != 1 or not isinstance(completion[0], dict):
@@ -27,4 +27,7 @@ def parse_prediction(completion):
         return None
     if not math.isfinite(confidence) or not 0 <= confidence <= 1:
         return None
-    return match[1].strip(), confidence
+    label = match[1].strip()
+    if allowed_labels is not None and label not in allowed_labels:
+        return None
+    return label, confidence

@@ -85,6 +85,20 @@ class TrainingMetrics:
             self.values[mode][f"rewards/{reward_func_name}"].append(mean_rewards)
         self.values[mode]["reward"].append(mean_grouped_rewards.mean().item())
         self.values[mode]["reward_std"].append(std_grouped_rewards.mean().item())
+        self.values[mode]["zero_reward_std_fraction"].append(
+            (std_grouped_rewards == 0).float().mean().item()
+        )
+        invalid_penalty_rewards = {
+            "dico_accuracy_reward",
+            "dico_brier_reward",
+            "dico_format_reward",
+        }
+        dico_columns = [
+            i for i, name in enumerate(reward_func_names) if name in invalid_penalty_rewards
+        ]
+        if dico_columns:
+            invalid = (rewards_per_func[:, dico_columns] < 0).any(dim=1)
+            self.values[mode]["dico/invalid_rate"].append(invalid.float().mean().item())
 
         # Log prompt and completion texts
         num_completions_to_log = self.num_completions_to_log

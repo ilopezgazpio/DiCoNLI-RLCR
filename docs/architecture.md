@@ -1,22 +1,23 @@
 # Architecture
 
 This repository retains one modular application, under `src/main/python/rlcr`.
-The old benchmark layer has been removed. DiCo-NLI data, export, and scoring are implemented;
+The old benchmark layer has been removed. DiCo-NLI data, prompting, ordinary GRPO
+task rewards, export, and scoring are implemented;
 the remaining steps are tracked in [short-term.md](short-term.md).
 
 ## Responsibilities
 
 | Package | Responsibility |
 |---|---|
-| `cli.py`, `__main__.py` | One CLI: train, evaluate (raw generation), infer, prepare-data, fetch-scorer, export-submission, score |
+| `cli.py`, `__main__.py` | One CLI: train, evaluate (raw generation), infer, prepare-data, prepare-prompts, fetch-scorer, export-submission, score |
 | `arguments/` | One configuration dataclass per file |
 | `configuration/` | Resolved run-settings snapshots |
 | `data/validation.py` | Prepared prompt/label validation, no task transformations |
-| `data/dico_nli/` | CSV records, input labels, reference joins, pair/split validation, sampling, audit/storage |
+| `data/dico_nli/` | CSV records, labels, reference joins, pair/split validation, sampling, audit/storage, versioned prompt preparation |
 | `text/prediction.py` | Strict exact-label and scalar-confidence parsing |
 | `models/` | Policy, reference, tokenizer, inference, quantization, device memory |
-| `rewards/` | Exact accuracy, scalar Brier, format, registry |
-| `training/` | Config parsing, split loading, lifecycle, logging, model cards |
+| `rewards/` | Exact accuracy, scalar Brier, format, explicit DiCo vocabulary bindings, registry |
+| `training/` | Config parsing, split/gold validation, prompt token-budget preflight, lifecycle, logging, model cards |
 | `training/grpo/` | Sampling, rollouts, advantages, loss, metrics |
 | `inference/` | Prepared-prompt rendering, generation, optional token log-probabilities |
 | `evaluation/` | Batch-generation configs, raw outputs, local persistence; generic calibration helpers |
@@ -30,6 +31,7 @@ there is no service framework or mixin hierarchy.
 ```text
 CLI -> strict training configuration -> training/runner.py
     -> training/datasets.py: load and validate prepared inputs
+    -> DiCo rewards: load tokenizer and check complete prompt token lengths
     -> training/grpo/trainer.py: initialize GRPOTrainer
         -> models/training_kwargs.py: resolve loading/quantization settings
         -> models/policy.py: base model, adapters, optional reference
@@ -72,7 +74,7 @@ generic shuffling/buffering. The standard trainer is still ordinary GRPO.
 
 Training uses prepared text/chat prompts and exact string labels.
 Batch generation additionally requires stable unique identifiers.
-There are no dataset-name switches, named task prompts, answer normalization,
+There are no dataset-name switches, implicit prompt injection, answer normalization,
 symbolic verification, answer-repair generations, or external judge calls.
 
 `evaluate` renders each prepared prompt, generates raw completions, and saves
@@ -81,8 +83,8 @@ DiCo-NLI scorer. Input-label and source/pair validation belong to the data adapt
 `export-submission` enforces output labels/confidence and exact ID coverage without
 using gold. `score` explicitly combines a submission with a reference and invokes
 the unchanged pinned upstream scorer. The source cache is external, not a second
-application package or entry point. Model training still needs task-specific
-prompt and output-label integration.
+application package or entry point. `dico_accuracy`, `dico_brier`, and `dico_format`
+fix the training parser vocabulary without duplicating reward formulas.
 
 Within `evaluation/dico_nli/`, `submission.py` owns pure validation/serialization;
 `datasets.py` owns local Arrow boundaries; `export.py` owns export artifacts.
@@ -93,9 +95,11 @@ No custom implementation of the official metrics is added. See
 [evaluation.md](evaluation.md) for the contracts and licensing boundary.
 
 The data adapter saves canonical records without prompts. Its immutable record
-keeps texts, labels, source IDs, and reference availability explicit. Future prompt
-construction must whitelist model inputs, not stringify metadata. See [data.md](data.md)
-for the module contract, sampling decisions, and audit results.
+keeps texts, labels, source IDs, and reference availability explicit.
+`prompts.py` is the pure text/language-only builder; `prompt_preparation.py` validates
+canonical inputs, adds prompts offline, and records hashes. Both training and
+inference consume those same messages through the model's chat template.
+See [data.md](data.md) and [training.md](training.md) for contracts and audit results.
 
 ## Launching and storage
 
@@ -110,7 +114,7 @@ local batch times worker count. The local batch is
 `steps_per_generation` defaulting to accumulation steps.
 The global batch must be divisible by `num_generations`.
 
-Data, recipes, and outputs stay separate; the data recipe is bundled, model recipes are not.
+Data, recipes, and outputs stay separate; data and starter train/eval recipes are bundled.
 Resolved snapshots describe application arguments, not launcher flags/hardware.
 Input metadata is preserved, and batch reruns reject changed input rows.
 Model-label caching is not content-addressed: change the output directory or

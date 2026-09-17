@@ -54,6 +54,11 @@ def build_parser():
     )
     prepare.add_argument("--config", required=True, help="Data preparation YAML path")
     prepare.add_argument("--output-dir", help="Override the new prepared dataset directory")
+    prompts = commands.add_parser(
+        "prepare-prompts", help="Build versioned, gold-free DiCo-NLI prompts"
+    )
+    prompts.add_argument("--dataset", required=True, help="Local canonical task DatasetDict")
+    prompts.add_argument("--output-dir", required=True, help="New prompted DatasetDict directory")
     add_scoring_commands(commands)
     return parser
 
@@ -98,6 +103,14 @@ def main(argv=None):
         except (ValueError, OSError) as error:
             parser.error(str(error))
         print(json.dumps(audit, indent=2))
+    elif args.command == "prepare-prompts":
+        from .data.dico_nli.prompt_preparation import prepare_nli_prompts
+
+        try:
+            result = prepare_nli_prompts(args.dataset, output_dir=args.output_dir)
+        except (ValueError, OSError) as error:
+            parser.error(str(error))
+        print(json.dumps(result, indent=2))
     elif args.command in {"fetch-scorer", "export-submission", "score"}:
         from .evaluation.dico_nli.commands import run_scoring_command
 

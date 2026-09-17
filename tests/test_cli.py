@@ -39,6 +39,7 @@ def cli(*args, cwd):
         ["evaluate"],
         ["infer"],
         ["prepare-data"],
+        ["prepare-prompts"],
         ["fetch-scorer"],
         ["export-submission"],
         ["score"],
